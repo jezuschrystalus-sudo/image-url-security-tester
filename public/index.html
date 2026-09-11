@@ -3,52 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image URL Security Tester</title>
+    <title>Image URL Brute Forcer</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Courier New', monospace;
         }
         
         body {
-            background: linear-gradient(135deg, #1e3c72, #2a5298);
-            color: #fff;
+            background: linear-gradient(135deg, #0a0e27, #1a1a2e);
+            color: #0f0;
             min-height: 100vh;
             padding: 20px;
+            overflow-x: hidden;
         }
         
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
-            background: rgba(0, 0, 0, 0.7);
-            border-radius: 15px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #0f0;
+            border-radius: 0;
             padding: 30px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.5);
         }
         
         header {
             text-align: center;
             margin-bottom: 30px;
+            border-bottom: 2px solid #0f0;
+            padding-bottom: 20px;
         }
         
         h1 {
             font-size: 2.5rem;
-            margin-bottom: 10px;
-            color: #4ecdc4;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        h2 {
-            font-size: 1.3rem;
-            margin: 20px 0 15px 0;
-            color: #4ecdc4;
+            margin-bottom: 5px;
+            color: #0f0;
+            text-shadow: 0 0 10px #0f0;
+            letter-spacing: 2px;
         }
         
         .subtitle {
-            color: #a0aec0;
-            font-size: 1.1rem;
+            color: #0f0;
+            font-size: 1rem;
+            opacity: 0.8;
+        }
+        
+        .status-bar {
+            background: #000;
+            border: 1px solid #0f0;
+            padding: 10px;
+            margin: 20px 0;
+            font-size: 0.9rem;
+            color: #0f0;
+        }
+        
+        .status-bar.active {
+            animation: blink 0.5s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.7; }
+        }
+        
+        h2 {
+            font-size: 1.2rem;
+            margin: 20px 0 15px 0;
+            color: #0f0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #0f0;
+            padding-bottom: 10px;
         }
         
         .main-content {
@@ -58,17 +86,17 @@
             margin-bottom: 30px;
         }
         
-        @media (max-width: 768px) {
+        @media (max-width: 1024px) {
             .main-content {
                 grid-template-columns: 1fr;
             }
         }
         
         .panel {
-            background: rgba(30, 41, 59, 0.8);
-            border-radius: 10px;
+            background: rgba(0, 20, 0, 0.8);
+            border: 1px solid #0f0;
             padding: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.1);
         }
         
         .form-group {
@@ -78,51 +106,64 @@
         label {
             display: block;
             margin-bottom: 8px;
-            font-weight: 600;
-            color: #4ecdc4;
+            font-weight: bold;
+            color: #0f0;
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            letter-spacing: 1px;
         }
         
         textarea, input, select, button {
             width: 100%;
             padding: 12px;
-            border-radius: 8px;
-            border: 2px solid #4ecdc4;
-            background: rgba(15, 23, 42, 0.8);
-            color: white;
+            border: 1px solid #0f0;
+            background: rgba(0, 0, 0, 0.9);
+            color: #0f0;
+            font-family: 'Courier New', monospace;
             font-size: 1rem;
         }
         
         textarea {
-            min-height: 150px;
+            min-height: 120px;
             resize: vertical;
         }
         
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+        
         button {
-            background: #4ecdc4;
-            color: #1e293b;
-            border: none;
+            background: #000;
+            border: 2px solid #0f0;
             cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s ease;
+            font-weight: bold;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
             margin-top: 10px;
         }
         
         button:hover:not(:disabled) {
-            background: #2a9d8f;
-            transform: translateY(-2px);
+            background: #0f0;
+            color: #000;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.8);
         }
         
         button:disabled {
-            opacity: 0.5;
+            opacity: 0.3;
             cursor: not-allowed;
         }
         
         button.stop {
-            background: #e53e3e;
+            border-color: #ff0000;
+            color: #ff0000;
         }
         
         button.stop:hover:not(:disabled) {
-            background: #c53030;
+            background: #ff0000;
+            color: #000;
+            box-shadow: 0 0 15px rgba(255, 0, 0, 0.8);
         }
         
         .controls {
@@ -132,43 +173,59 @@
         }
         
         .progress-container {
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 10px;
-            height: 20px;
+            background: #000;
+            border: 1px solid #0f0;
+            height: 30px;
             margin: 20px 0;
             overflow: hidden;
+            position: relative;
         }
         
         .progress-bar {
             height: 100%;
-            background: linear-gradient(90deg, #4ecdc4, #2a9d8f);
+            background: linear-gradient(90deg, #0f0, #00ff00);
             width: 0%;
-            transition: width 0.5s ease;
+            transition: width 0.3s ease;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.8);
+        }
+        
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #0f0;
+            font-weight: bold;
+            z-index: 10;
         }
         
         .stats {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
             gap: 15px;
             margin: 20px 0;
         }
         
         .stat-card {
-            background: rgba(78, 205, 196, 0.2);
-            border-radius: 8px;
+            background: #000;
+            border: 1px solid #0f0;
             padding: 15px;
             text-align: center;
         }
         
         .stat-value {
-            font-size: 1.8rem;
+            font-size: 2rem;
             font-weight: bold;
-            color: #4ecdc4;
+            color: #0f0;
+            text-shadow: 0 0 10px #0f0;
         }
         
         .stat-label {
-            color: #cbd5e0;
-            font-size: 0.9rem;
+            color: #0f0;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            margin-top: 5px;
+            opacity: 0.8;
         }
         
         .filters {
@@ -187,128 +244,195 @@
         .filter-checkbox input {
             width: auto;
             cursor: pointer;
+            accent-color: #0f0;
         }
         
         .filter-checkbox label {
             margin: 0;
-            color: #cbd5e0;
+            color: #0f0;
             cursor: pointer;
+            font-size: 0.9rem;
         }
         
         .results-container {
-            margin-top: 30px;
-            max-height: 600px;
+            margin-top: 20px;
+            max-height: 500px;
             overflow-y: auto;
+            border: 1px solid #0f0;
+            background: #000;
         }
         
         .result-item {
-            background: rgba(30, 41, 59, 0.8);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            border-left: 4px solid #4ecdc4;
+            background: rgba(0, 255, 0, 0.05);
+            border-bottom: 1px solid #0f0;
+            padding: 12px;
+            margin: 0;
+        }
+        
+        .result-item:hover {
+            background: rgba(0, 255, 0, 0.1);
         }
         
         .result-url {
-            font-weight: 600;
-            color: #4ecdc4;
+            font-weight: bold;
+            color: #0f0;
             word-break: break-all;
-            margin-bottom: 8px;
+            margin-bottom: 5px;
+            font-size: 0.9rem;
         }
         
         .result-meta {
             display: flex;
             gap: 15px;
-            font-size: 0.9rem;
-            color: #cbd5e0;
+            font-size: 0.8rem;
+            color: #0f0;
+            opacity: 0.7;
             flex-wrap: wrap;
         }
         
         .status-badge {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8rem;
+            padding: 2px 6px;
+            border: 1px solid #0f0;
+            font-size: 0.75rem;
             font-weight: bold;
+            color: #0f0;
         }
         
-        .status-new { background: #48bb78; color: white; }
-        .status-placeholder { background: #ed8936; color: white; }
-        .status-duplicate { background: #4299e1; color: white; }
-        .status-error { background: #e53e3e; color: white; }
+        .status-new { border-color: #0f0; }
+        .status-placeholder { border-color: #ff8800; color: #ff8800; }
         
         .empty-state {
             text-align: center;
             padding: 40px;
-            color: #a0aec0;
+            color: #0f0;
+            opacity: 0.5;
         }
         
         .instructions {
-            background: rgba(78, 205, 196, 0.1);
-            border-left: 4px solid #4ecdc4;
+            background: #000;
+            border-left: 4px solid #0f0;
+            border-right: 1px solid #0f0;
+            border-top: 1px solid #0f0;
+            border-bottom: 1px solid #0f0;
             padding: 15px;
-            border-radius: 0 8px 8px 0;
             margin: 20px 0;
+            color: #0f0;
+        }
+        
+        .instructions p {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+        
+        .scan-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+            font-size: 0.85rem;
+        }
+        
+        .info-box {
+            background: #000;
+            border: 1px solid #0f0;
+            padding: 10px;
+            color: #0f0;
+        }
+        
+        .info-label {
+            text-transform: uppercase;
+            opacity: 0.7;
+            font-size: 0.75rem;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+        
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #000;
+            border: 1px solid #0f0;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #0f0;
+            border-radius: 0;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #00ff00;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🔍 Image URL Security Tester</h1>
-            <p class="subtitle">Discover new images on servers by testing variations of known-valid URLs</p>
+            <h1>⚡ IMAGE URL BRUTE FORCER ⚡</h1>
+            <p class="subtitle">Hashcat-style fuzzing engine for discovering hidden images</p>
         </header>
 
+        <div class="status-bar" id="status-bar">
+            [READY] Waiting for input...
+        </div>
+
         <div class="instructions">
-            <p><strong>How to use:</strong> Paste known-valid image URLs, adjust settings, then click Start to begin scanning for variations.</p>
+            <p><strong>► How to use:</strong> Paste known-valid image URLs, configure fuzzing parameters, then start brute force attack. Supports 5 fuzzing strategies: Numeric ID, Hash variations, Charset fuzzing, Date fuzzing, and Padded ID fuzzing.</p>
         </div>
 
         <div class="main-content">
             <div class="panel">
-                <h2>Reference URLs</h2>
+                <h2>Reference URLs (Seeds)</h2>
                 <div class="form-group">
                     <label for="reference-urls">Paste Valid Image URLs (one per line)</label>
                     <textarea id="reference-urls" placeholder="https://example.com/images/1.jpg
 https://example.com/images/2.jpg
-https://example.com/images/3.jpg"></textarea>
+https://example.com/photos/img_001.jpg"></textarea>
                 </div>
                 
-                <h2>Scan Settings</h2>
+                <h2>Brute Force Settings</h2>
                 <div class="controls">
                     <div class="form-group">
-                        <label for="range">Range (# to vary)</label>
-                        <input type="number" id="range" value="50" min="1" max="1000">
+                        <label for="range">Range (fuzzing depth)</label>
+                        <input type="number" id="range" value="100" min="1" max="5000">
                     </div>
                     
                     <div class="form-group">
-                        <label for="delay">Delay (ms)</label>
-                        <input type="number" id="delay" value="100" min="0">
+                        <label for="delay">Delay (ms/batch)</label>
+                        <input type="number" id="delay" value="50" min="0">
                     </div>
                     
                     <div class="form-group">
-                        <label for="concurrency">Concurrency</label>
-                        <input type="number" id="concurrency" value="5" min="1" max="20">
+                        <label for="concurrency">Threads</label>
+                        <input type="number" id="concurrency" value="10" min="1" max="50">
                     </div>
                     
                     <div class="form-group">
-                        <label for="max-requests">Max Requests</label>
-                        <input type="number" id="max-requests" value="500" min="1">
+                        <label for="max-requests">Max URLs</label>
+                        <input type="number" id="max-requests" value="2000" min="1">
                     </div>
                 </div>
                 
                 <div class="form-group">
-                    <button id="start-btn">▶ Start Scan</button>
-                    <button id="stop-btn" class="stop" disabled>⏹ Stop Scan</button>
-                    <button id="export-btn" disabled>📥 Export Results</button>
+                    <button id="start-btn">▶ START ATTACK</button>
+                    <button id="stop-btn" class="stop" disabled>⏹ STOP</button>
+                    <button id="export-btn" disabled>💾 EXPORT CSV</button>
                 </div>
                 
                 <div class="progress-container">
                     <div class="progress-bar" id="progress-bar"></div>
+                    <div class="progress-text" id="progress-text">0%</div>
                 </div>
                 
                 <div class="stats">
                     <div class="stat-card">
                         <div class="stat-value" id="scanned-count">0</div>
-                        <div class="stat-label">Scanned</div>
+                        <div class="stat-label">URLs Tested</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value" id="new-count">0</div>
@@ -319,12 +443,23 @@ https://example.com/images/3.jpg"></textarea>
                         <div class="stat-label">Placeholders</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="duplicate-count">0</div>
-                        <div class="stat-label">Duplicates</div>
-                    </div>
-                    <div class="stat-card">
                         <div class="stat-value" id="error-count">0</div>
-                        <div class="stat-label">Errors</div>
+                        <div class="stat-label">Not Found</div>
+                    </div>
+                </div>
+                
+                <div class="scan-info">
+                    <div class="info-box">
+                        <div class="info-label">Request Rate</div>
+                        <div class="info-value" id="rate-info">0 req/s</div>
+                    </div>
+                    <div class="info-box">
+                        <div class="info-label">Elapsed Time</div>
+                        <div class="info-value" id="time-info">0s</div>
+                    </div>
+                    <div class="info-box">
+                        <div class="info-label">Success Rate</div>
+                        <div class="info-value" id="success-info">0%</div>
                     </div>
                 </div>
             </div>
@@ -334,27 +469,19 @@ https://example.com/images/3.jpg"></textarea>
                 <div class="filters">
                     <div class="filter-checkbox">
                         <input type="checkbox" id="show-new" checked>
-                        <label for="show-new">New Images</label>
+                        <label for="show-new">✓ New Images</label>
                     </div>
                     <div class="filter-checkbox">
                         <input type="checkbox" id="show-placeholders" checked>
-                        <label for="show-placeholders">Placeholders</label>
-                    </div>
-                    <div class="filter-checkbox">
-                        <input type="checkbox" id="show-duplicates">
-                        <label for="show-duplicates">Duplicates</label>
-                    </div>
-                    <div class="filter-checkbox">
-                        <input type="checkbox" id="show-errors">
-                        <label for="show-errors">Errors</label>
+                        <label for="show-placeholders">✓ Placeholders</label>
                     </div>
                 </div>
                 
-                <h2>Results</h2>
+                <h2>Results Stream</h2>
                 <div class="results-container">
                     <div id="results">
                         <div class="empty-state">
-                            <p>No results yet. Start a scan to see discovered images.</p>
+                            [IDLE] No results yet. Start attack to scan.
                         </div>
                     </div>
                 </div>
@@ -367,24 +494,28 @@ https://example.com/images/3.jpg"></textarea>
         const stopBtn = document.getElementById('stop-btn');
         const exportBtn = document.getElementById('export-btn');
         const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
         const resultsDiv = document.getElementById('results');
+        const statusBar = document.getElementById('status-bar');
         
         const scannedCount = document.getElementById('scanned-count');
         const newCount = document.getElementById('new-count');
         const placeholderCount = document.getElementById('placeholder-count');
-        const duplicateCount = document.getElementById('duplicate-count');
         const errorCount = document.getElementById('error-count');
+        const rateInfo = document.getElementById('rate-info');
+        const timeInfo = document.getElementById('time-info');
+        const successInfo = document.getElementById('success-info');
         
         let isScanning = false;
         let currentSessionId = null;
         let progressInterval = null;
         let allResults = [];
+        let scanStartTime = null;
         
         startBtn.addEventListener('click', startScan);
         stopBtn.addEventListener('click', stopScan);
         exportBtn.addEventListener('click', exportResults);
         
-        // Filter results when checkboxes change
         document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
             checkbox.addEventListener('change', refreshDisplay);
         });
@@ -394,7 +525,7 @@ https://example.com/images/3.jpg"></textarea>
             
             const referenceUrls = document.getElementById('reference-urls').value.trim().split('\n').filter(u => u.trim());
             if (referenceUrls.length === 0) {
-                alert('Please enter at least one reference URL');
+                alert('Enter reference URLs');
                 return;
             }
             
@@ -404,11 +535,14 @@ https://example.com/images/3.jpg"></textarea>
             const maxRequests = parseInt(document.getElementById('max-requests').value);
             
             isScanning = true;
+            scanStartTime = Date.now();
             startBtn.disabled = true;
             stopBtn.disabled = false;
             exportBtn.disabled = true;
             allResults = [];
-            resultsDiv.innerHTML = '<div class="empty-state"><p>Scanning in progress...</p></div>';
+            statusBar.textContent = `[ATTACKING] Fuzzing ${referenceUrls.length} seed(s) with range ${range}...`;
+            statusBar.classList.add('active');
+            resultsDiv.innerHTML = '<div class="empty-state">[ACTIVE] Brute force in progress...</div>';
             
             try {
                 const response = await fetch('/api/scan', {
@@ -420,14 +554,14 @@ https://example.com/images/3.jpg"></textarea>
                 const data = await response.json();
                 currentSessionId = data.sessionId;
                 
-                // Update progress every 500ms
-                progressInterval = setInterval(updateProgress, 500);
+                progressInterval = setInterval(updateProgress, 300);
             } catch (error) {
-                console.error('Error starting scan:', error);
-                alert('Failed to start scan');
+                console.error('Error:', error);
+                alert('Failed to start attack');
                 isScanning = false;
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
+                statusBar.classList.remove('active');
             }
         }
         
@@ -439,14 +573,23 @@ https://example.com/images/3.jpg"></textarea>
                 const data = await response.json();
                 
                 const maxScans = parseInt(document.getElementById('max-requests').value);
-                const progress = (data.stats.scanned / maxScans) * 100;
-                progressBar.style.width = Math.min(progress, 100) + '%';
+                const progress = Math.min((data.stats.scanned / maxScans) * 100, 100);
+                progressBar.style.width = progress + '%';
+                progressText.textContent = Math.round(progress) + '%';
                 
                 scannedCount.textContent = data.stats.scanned.toLocaleString();
                 newCount.textContent = data.stats.new.toLocaleString();
                 placeholderCount.textContent = data.stats.placeholder.toLocaleString();
-                duplicateCount.textContent = data.stats.duplicate.toLocaleString();
                 errorCount.textContent = data.stats.error.toLocaleString();
+                
+                const elapsed = Math.round((Date.now() - scanStartTime) / 1000);
+                timeInfo.textContent = elapsed + 's';
+                
+                const rate = data.stats.scanned > 0 ? Math.round(data.stats.scanned / (elapsed || 1)) : 0;
+                rateInfo.textContent = rate + ' req/s';
+                
+                const successRate = data.stats.scanned > 0 ? Math.round(((data.stats.new + data.stats.placeholder) / data.stats.scanned) * 100) : 0;
+                successInfo.textContent = successRate + '%';
                 
                 allResults = data.results;
                 refreshDisplay();
@@ -457,6 +600,8 @@ https://example.com/images/3.jpg"></textarea>
                     startBtn.disabled = false;
                     stopBtn.disabled = true;
                     exportBtn.disabled = false;
+                    statusBar.textContent = `[COMPLETE] Found ${data.stats.new} new images in ${elapsed}s`;
+                    statusBar.classList.remove('active');
                 }
             } catch (error) {
                 console.error('Error updating progress:', error);
@@ -473,27 +618,25 @@ https://example.com/images/3.jpg"></textarea>
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
                 exportBtn.disabled = false;
+                statusBar.textContent = '[STOPPED] Attack halted by user';
+                statusBar.classList.remove('active');
             } catch (error) {
-                console.error('Error stopping scan:', error);
+                console.error('Error:', error);
             }
         }
         
         function refreshDisplay() {
             const showNew = document.getElementById('show-new').checked;
             const showPlaceholders = document.getElementById('show-placeholders').checked;
-            const showDuplicates = document.getElementById('show-duplicates').checked;
-            const showErrors = document.getElementById('show-errors').checked;
             
             const filtered = allResults.filter(result => {
                 if (result.classification === 'new' && !showNew) return false;
                 if (result.classification === 'placeholder' && !showPlaceholders) return false;
-                if (result.classification === 'duplicate' && !showDuplicates) return false;
-                if (result.classification === 'error' && !showErrors) return false;
                 return true;
             });
             
             if (filtered.length === 0) {
-                resultsDiv.innerHTML = '<div class="empty-state"><p>No results match your filters.</p></div>';
+                resultsDiv.innerHTML = '<div class="empty-state">[IDLE] No results match filters</div>';
                 return;
             }
             
@@ -503,7 +646,7 @@ https://example.com/images/3.jpg"></textarea>
                     <div class="result-meta">
                         <span>Status: ${result.status}</span>
                         <span>Size: ${(result.contentLength / 1024).toFixed(1)}KB</span>
-                        <span class="status-badge status-${result.classification}">${result.classification.toUpperCase()}</span>
+                        <span class="status-badge status-${result.classification}">[ ${result.classification.toUpperCase()} ]</span>
                     </div>
                 </div>
             `).join('');
@@ -522,7 +665,7 @@ https://example.com/images/3.jpg"></textarea>
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `scan-results-${new Date().getTime()}.csv`;
+            a.download = `brute-force-results-${new Date().getTime()}.csv`;
             a.click();
             window.URL.revokeObjectURL(url);
         }
