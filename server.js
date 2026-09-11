@@ -9,93 +9,105 @@ app.use(express.static('public'));
 
 const scanSessions = new Map();
 
-// True hashcat brute force mode - exhaustive character enumeration
-class HashcatBruteForceFuzzer {
-  constructor(baseUrl, range, maskPositions = null) {
+// Ultimate Hashcat Brute Force - Independent dual-token enumeration
+class UltimateHashcatBruteForcer {
+  constructor(baseUrl, range) {
     this.baseUrl = baseUrl;
     this.range = range;
     this.urlObj = new URL(baseUrl);
     this.pathname = this.urlObj.pathname;
-    this.maskPositions = maskPositions;
     
-    // Character sets (like hashcat)
+    // Hashcat character sets
     this.charsets = {
       'l': 'abcdefghijklmnopqrstuvwxyz',
       'u': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
       'd': '0123456789',
       'h': '0123456789abcdef',
       'H': '0123456789ABCDEF',
-      's': ' !"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~',
       'a': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
       '?': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'
     };
   }
 
-  // Find hash-like tokens in URL
+  // Extract both tokens with their positions
   findTokens() {
     const tokens = [];
     
-    // Find long alphanumeric/hex sequences (20+ chars)
-    const patterns = [
-      { regex: /[a-f0-9]{20,}/gi, type: 'hex', charset: 'h' },
-      { regex: /[A-Za-z0-9_-]{20,}/g, type: 'base64', charset: '?' }
-    ];
+    // Find 64-char hex (first token)
+    const hex64Pattern = /[a-f0-9]{64}/gi;
+    let match = hex64Pattern.exec(this.pathname);
+    if (match) {
+      tokens.push({
+        value: match[0],
+        index: match.index,
+        type: 'primary_hex',
+        charset: 'h',
+        length: 64,
+        position: 0
+      });
+    }
     
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.regex.exec(this.pathname)) !== null) {
-        // Check if not already found
-        if (!tokens.some(t => t.index === match.index)) {
-          tokens.push({
-            value: match[0],
-            index: match.index,
-            type: pattern.type,
-            charset: pattern.charset,
-            length: match[0].length
-          });
-        }
-      }
+    // Find 43-char base64-like (second token)
+    const base64Pattern = /[A-Za-z0-9_-]{43}/g;
+    match = base64Pattern.exec(this.pathname);
+    if (match) {
+      tokens.push({
+        value: match[0],
+        index: match.index,
+        type: 'secondary_base64',
+        charset: '?',
+        length: 43,
+        position: 1
+      });
     }
     
     return tokens;
   }
 
-  // Hashcat-style brute force: enumerate positions exhaustively
-  *bruteForceFuzzer(token, charset = '?') {
-    const charList = this.charsets[charset] || this.charsets['?'];
-    const chars = token.split('');
-    const numPositions = chars.length;
+  // Strategy 1: Fuzz PRIMARY token (64-char hex) with SECONDARY fixed
+  *primaryTokenFuzzer() {
+    const tokens = this.findTokens();
+    if (tokens.length < 2) return;
     
-    // Start with limited positions to fuzz (e.g., last 6-8 characters)
-    // This is like hashcat's --increment feature
-    const fuzzyLength = Math.min(8, Math.max(3, Math.floor(numPositions / 4)));
-    const startPos = numPositions - fuzzyLength;
+    const primaryToken = tokens[0];
+    const secondaryToken = tokens[1];
+    const charset = this.charsets[primaryToken.charset];
     
+    console.log(`[PRIMARY FUZZ] Enumerating ${primaryToken.value.substring(0, 10)}... (${primaryToken.length} chars)`);
+    
+    let generated = 0;
+    const primaryRange = Math.floor(this.range / 2);
+    
+    // Enumerate last 8 characters of primary token
+    const varZone = 8;
+    const fixZone = primaryToken.length - varZone;
+    const prefix = primaryToken.value.substring(0, fixZone);
+    
+    let positions = new Array(varZone).fill(0);
     let iterations = 0;
-    const maxIterations = this.range;
     
-    // Generate combinations by incrementing positions
-    let positions = new Array(fuzzyLength).fill(0);
-    
-    while (iterations < maxIterations) {
-      // Create mutated token
-      const mutated = [...chars];
-      
-      // Apply current position values to fuzz zone
-      for (let i = 0; i < fuzzyLength; i++) {
-        mutated[startPos + i] = charList[positions[i] % charList.length];
+    while (iterations < primaryRange && generated < primaryRange) {
+      // Build mutated primary
+      let suffix = '';
+      for (let i = 0; i < varZone; i++) {
+        suffix += charset[positions[i] % charset.length];
       }
       
-      const newToken = mutated.join('');
-      if (newToken !== token) {
-        yield this.baseUrl.replace(token, newToken);
+      const mutatedPrimary = prefix + suffix;
+      
+      // Keep secondary fixed
+      const newUrl = this.baseUrl.replace(primaryToken.value, mutatedPrimary);
+      
+      if (newUrl !== this.baseUrl) {
+        yield newUrl;
+        generated++;
       }
       
-      // Increment positions (like odometer: rightmost first)
+      // Increment positions (odometer)
       let carry = 1;
-      for (let i = fuzzyLength - 1; i >= 0 && carry; i--) {
+      for (let i = varZone - 1; i >= 0 && carry; i--) {
         positions[i] += carry;
-        if (positions[i] >= charList.length) {
+        if (positions[i] >= charset.length) {
           positions[i] = 0;
           carry = 1;
         } else {
@@ -107,38 +119,51 @@ class HashcatBruteForceFuzzer {
     }
   }
 
-  // Hybrid: partially increment, partially random
-  *hybridBruteFuzzer(token, charset = '?') {
-    const charList = this.charsets[charset] || this.charsets['?'];
-    const chars = token.split('');
-    const numPositions = chars.length;
+  // Strategy 2: Fuzz SECONDARY token (43-char base64) with PRIMARY fixed
+  *secondaryTokenFuzzer() {
+    const tokens = this.findTokens();
+    if (tokens.length < 2) return;
     
-    // Divide into fixed and variable zones
-    const fixedSize = Math.max(0, numPositions - 6);
-    const varSize = numPositions - fixedSize;
+    const primaryToken = tokens[0];
+    const secondaryToken = tokens[1];
+    const charset = this.charsets[secondaryToken.charset];
     
+    console.log(`[SECONDARY FUZZ] Enumerating ${secondaryToken.value.substring(0, 10)}... (${secondaryToken.length} chars)`);
+    
+    let generated = 0;
+    const secondaryRange = Math.floor(this.range / 2);
+    
+    // Enumerate last 10 characters of secondary token
+    const varZone = 10;
+    const fixZone = secondaryToken.length - varZone;
+    const prefix = secondaryToken.value.substring(0, fixZone);
+    
+    let positions = new Array(varZone).fill(0);
     let iterations = 0;
-    let posCounter = new Array(varSize).fill(0);
     
-    while (iterations < this.range) {
-      const mutated = [...chars];
-      
-      // Keep prefix fixed, enumerate suffix
-      for (let i = 0; i < varSize; i++) {
-        mutated[fixedSize + i] = charList[posCounter[i] % charList.length];
+    while (iterations < secondaryRange && generated < secondaryRange) {
+      // Build mutated secondary
+      let suffix = '';
+      for (let i = 0; i < varZone; i++) {
+        suffix += charset[positions[i] % charset.length];
       }
       
-      const newToken = mutated.join('');
-      if (newToken !== token) {
-        yield this.baseUrl.replace(token, newToken);
+      const mutatedSecondary = prefix + suffix;
+      
+      // Keep primary fixed
+      const newUrl = this.baseUrl.replace(secondaryToken.value, mutatedSecondary);
+      
+      if (newUrl !== this.baseUrl) {
+        yield newUrl;
+        generated++;
       }
       
-      // Increment counter
+      // Increment positions
       let carry = 1;
-      for (let i = varSize - 1; i >= 0 && carry; i--) {
-        posCounter[i] += carry;
-        if (posCounter[i] >= charList.length) {
-          posCounter[i] = 0;
+      for (let i = varZone - 1; i >= 0 && carry; i--) {
+        positions[i] += carry;
+        if (positions[i] >= charset.length) {
+          positions[i] = 0;
           carry = 1;
         } else {
           carry = 0;
@@ -149,31 +174,107 @@ class HashcatBruteForceFuzzer {
     }
   }
 
-  // Generate all variations
-  *generateAll() {
+  // Strategy 3: Dual token fuzzing - vary both simultaneously
+  *dualTokenFuzzer() {
     const tokens = this.findTokens();
-    console.log(`Found ${tokens.length} token(s) for brute force`);
+    if (tokens.length < 2) return;
     
-    if (tokens.length === 0) return;
+    const primaryToken = tokens[0];
+    const secondaryToken = tokens[1];
+    const primaryCharset = this.charsets[primaryToken.charset];
+    const secondaryCharset = this.charsets[secondaryToken.charset];
     
-    // Fuzz each token
-    for (const token of tokens) {
-      console.log(`Brute forcing token: ${token.value.substring(0, 10)}... (type: ${token.type}, length: ${token.length})`);
+    console.log(`[DUAL FUZZ] Enumerating both tokens simultaneously`);
+    
+    const dualRange = Math.floor(this.range / 4);
+    
+    // Shorter variable zones for dual fuzzing
+    const primaryVarZone = 6;
+    const secondaryVarZone = 8;
+    
+    const primaryPrefix = primaryToken.value.substring(0, primaryToken.length - primaryVarZone);
+    const secondaryPrefix = secondaryToken.value.substring(0, secondaryToken.length - secondaryVarZone);
+    
+    let primaryPos = new Array(primaryVarZone).fill(0);
+    let secondaryPos = new Array(secondaryVarZone).fill(0);
+    
+    for (let iter = 0; iter < dualRange; iter++) {
+      // Build mutated primary
+      let primarySuffix = '';
+      for (let i = 0; i < primaryVarZone; i++) {
+        primarySuffix += primaryCharset[primaryPos[i] % primaryCharset.length];
+      }
+      const mutatedPrimary = primaryPrefix + primarySuffix;
       
-      // Use hybrid approach: incremental + some randomness
-      let generated = 0;
-      const tokenRange = Math.floor(this.range / tokens.length);
+      // Build mutated secondary
+      let secondarySuffix = '';
+      for (let i = 0; i < secondaryVarZone; i++) {
+        secondarySuffix += secondaryCharset[secondaryPos[i] % secondaryCharset.length];
+      }
+      const mutatedSecondary = secondaryPrefix + secondarySuffix;
       
-      for (const url of this.hybridBruteFuzzer(token.value, token.charset)) {
-        if (generated >= tokenRange) break;
-        yield url;
-        generated++;
+      // Replace both
+      let newUrl = this.baseUrl.replace(primaryToken.value, mutatedPrimary);
+      newUrl = newUrl.replace(secondaryToken.value, mutatedSecondary);
+      
+      if (newUrl !== this.baseUrl) {
+        yield newUrl;
+      }
+      
+      // Increment secondary (fast moving)
+      let carry = 1;
+      for (let i = secondaryVarZone - 1; i >= 0 && carry; i--) {
+        secondaryPos[i] += carry;
+        if (secondaryPos[i] >= secondaryCharset.length) {
+          secondaryPos[i] = 0;
+          carry = 1;
+        } else {
+          carry = 0;
+        }
+      }
+      
+      // Every N iterations, increment primary
+      if (iter % 100 === 0) {
+        carry = 1;
+        for (let i = primaryVarZone - 1; i >= 0 && carry; i--) {
+          primaryPos[i] += carry;
+          if (primaryPos[i] >= primaryCharset.length) {
+            primaryPos[i] = 0;
+            carry = 1;
+          } else {
+            carry = 0;
+          }
+        }
       }
     }
   }
+
+  // Main generator - all strategies
+  *generateAll() {
+    const tokens = this.findTokens();
+    console.log(`Found ${tokens.length} tokens:`);
+    tokens.forEach((t, i) => {
+      console.log(`  [${i}] ${t.type}: ${t.value.substring(0, 16)}... (${t.length} chars, charset: ${t.charset})`);
+    });
+    
+    if (tokens.length < 2) {
+      console.log('ERROR: Need both primary and secondary tokens!');
+      return;
+    }
+    
+    // Execute all three strategies in sequence
+    console.log('\n[STRATEGY 1] Fuzzing PRIMARY token...');
+    yield* this.primaryTokenFuzzer();
+    
+    console.log('\n[STRATEGY 2] Fuzzing SECONDARY token...');
+    yield* this.secondaryTokenFuzzer();
+    
+    console.log('\n[STRATEGY 3] Fuzzing BOTH tokens...');
+    yield* this.dualTokenFuzzer();
+  }
 }
 
-// Smart content-aware HTTP client
+// Content-aware HTTP client with deduplication
 async function checkURL(url, timeout = 6000, retries = 1, contentHashMap = new Map()) {
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -197,58 +298,25 @@ async function checkURL(url, timeout = 6000, retries = 1, contentHashMap = new M
         httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
       });
       
-      // Ignore 304 Not Modified
       if (response.status === 304) {
-        return {
-          url,
-          status: 304,
-          found: false,
-          contentLength: 0,
-          hash: null,
-          isDuplicate: false
-        };
+        return { url, status: 304, found: false, contentLength: 0, hash: null, isDuplicate: false };
       }
       
-      // Only accept 200 OK
       if (response.status !== 200) {
-        return {
-          url,
-          status: response.status,
-          found: false,
-          contentLength: 0,
-          hash: null,
-          isDuplicate: false
-        };
+        return { url, status: response.status, found: false, contentLength: 0, hash: null, isDuplicate: false };
       }
       
       const contentLength = response.data.length;
       const contentType = response.headers['content-type'] || 'unknown';
       
-      // Must be image
       if (!contentType.includes('image/')) {
-        return {
-          url,
-          status: 200,
-          found: false,
-          contentLength,
-          hash: null,
-          isDuplicate: false
-        };
+        return { url, status: 200, found: false, contentLength, hash: null, isDuplicate: false };
       }
       
-      // Reject tiny files (placeholders/errors)
       if (contentLength < 1500) {
-        return {
-          url,
-          status: 200,
-          found: false,
-          contentLength,
-          hash: null,
-          isDuplicate: false
-        };
+        return { url, status: 200, found: false, contentLength, hash: null, isDuplicate: false };
       }
       
-      // Hash content for dedup
       const contentHash = crypto.createHash('md5').update(response.data).digest('hex');
       const isDuplicate = contentHashMap.has(contentHash);
       
@@ -256,33 +324,17 @@ async function checkURL(url, timeout = 6000, retries = 1, contentHashMap = new M
         contentHashMap.set(contentHash, url);
       }
       
-      return {
-        url,
-        status: 200,
-        found: true,
-        contentLength,
-        hash: contentHash,
-        isDuplicate,
-        contentType
-      };
+      return { url, status: 200, found: true, contentLength, hash: contentHash, isDuplicate };
       
     } catch (error) {
       if (attempt === retries - 1) {
-        return {
-          url,
-          status: 'timeout',
-          found: false,
-          contentLength: 0,
-          hash: null,
-          isDuplicate: false
-        };
+        return { url, status: 'timeout', found: false, contentLength: 0, hash: null, isDuplicate: false };
       }
       await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
 }
 
-// Classify result
 function classifyURL(data) {
   if (!data.found) return 'error';
   if (data.isDuplicate) return 'duplicate';
@@ -290,7 +342,6 @@ function classifyURL(data) {
   return 'new';
 }
 
-// Main scan endpoint
 app.post('/api/scan', async (req, res) => {
   const { referenceUrls, range, delay, concurrency, maxRequests, sessionId } = req.body;
   
@@ -315,7 +366,6 @@ app.post('/api/scan', async (req, res) => {
   performBruteForceScan(urls, range, delay, concurrency, maxRequests, sessionKey);
 });
 
-// Perform brute force scan
 async function performBruteForceScan(referenceUrls, range, delay, concurrency, maxRequests, sessionKey) {
   const session = scanSessions.get(sessionKey);
   if (!session) return;
@@ -325,13 +375,13 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
   const seenUrls = new Set(referenceUrls);
   const contentHashMap = new Map();
   
-  // Generate brute force mutations
+  // Generate URLs using ultimate fuzzer
   for (const baseUrl of referenceUrls) {
-    const bruteForcer = new HashcatBruteForceFuzzer(baseUrl, range);
+    const fuzzer = new UltimateHashcatBruteForcer(baseUrl, range);
     
-    console.log(`[${sessionKey}] Starting hashcat brute force on: ${baseUrl}`);
+    console.log(`\n[${sessionKey}] Starting ultimate brute force on: ${baseUrl}`);
     
-    for (const url of bruteForcer.generateAll()) {
+    for (const url of fuzzer.generateAll()) {
       if (!seenUrls.has(url) && urlQueue.length < maxRequests) {
         urlQueue.push(url);
         seenUrls.add(url);
@@ -344,9 +394,9 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     if (totalGenerated >= maxRequests) break;
   }
   
-  console.log(`[${sessionKey}] Generated ${totalGenerated} brute force URLs (keyspace enumeration)`);
+  console.log(`\n[${sessionKey}] Generated ${totalGenerated} brute force URLs across all strategies`);
   
-  // Process with concurrency
+  // Process queue
   for (let i = 0; i < urlQueue.length; i += concurrency) {
     if (!session.active) break;
     
@@ -386,17 +436,15 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     }
   }
   
-  console.log(`[${sessionKey}] Brute force complete. Found ${session.stats.new} unique new images`);
+  console.log(`\n[${sessionKey}] ✅ ULTIMATE BRUTE FORCE COMPLETE`);
+  console.log(`Unique images found: ${session.stats.new + session.stats.placeholder}`);
+  console.log(`Duplicates filtered: ${session.stats.duplicate}`);
   session.active = false;
 }
 
-// Get progress
 app.get('/api/progress/:sessionId', (req, res) => {
   const session = scanSessions.get(req.params.sessionId);
-  
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
+  if (!session) return res.status(404).json({ error: 'Session not found' });
   
   res.json({
     active: session.active,
@@ -406,28 +454,18 @@ app.get('/api/progress/:sessionId', (req, res) => {
   });
 });
 
-// Stop scan
 app.post('/api/stop/:sessionId', (req, res) => {
   const session = scanSessions.get(req.params.sessionId);
-  
-  if (session) {
-    session.active = false;
-  }
-  
+  if (session) session.active = false;
   res.json({ success: true });
 });
 
-// Export results
 app.get('/api/export/:sessionId', (req, res) => {
   const session = scanSessions.get(req.params.sessionId);
-  
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-  
+  if (!session) return res.status(404).json({ error: 'Session not found' });
   res.json(session.results);
 });
 
 app.listen(PORT, () => {
-  console.log(`🔓 Image URL Brute Forcer (Hashcat Mode) running on http://localhost:${PORT}`);
+  console.log(`🔓 ULTIMATE IMAGE BRUTE FORCER (Hashcat Mode) running on http://localhost:${PORT}`);
 });
