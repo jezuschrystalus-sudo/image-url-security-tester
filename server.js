@@ -9,135 +9,191 @@ app.use(express.static('public'));
 
 const scanSessions = new Map();
 
-// Hashcat-style URL generators
-class URLBruteForcer {
+// Hashcat-style mask-based URL fuzzer
+class MaskBasedBruteForcer {
   constructor(baseUrl, range) {
     this.baseUrl = baseUrl;
     this.range = range;
     this.urlObj = new URL(baseUrl);
     this.pathname = this.urlObj.pathname;
+    
+    // Character sets for different fuzzing modes
+    this.charsets = {
+      'lower': 'abcdefghijklmnopqrstuvwxyz',
+      'upper': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+      'digit': '0123456789',
+      'hex': '0123456789abcdef',
+      'hex_upper': '0123456789ABCDEF',
+      'special': '-_',
+      'all': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'
+    };
   }
 
-  // Strategy 1: Numeric ID fuzzing
-  *numericIdFuzzer() {
-    const numericPattern = /(\d+)/g;
-    const matches = this.pathname.match(numericPattern);
+  // Find hash-like tokens in URL (hex strings, base64-like strings)
+  findTokens() {
+    const tokens = [];
     
-    if (!matches) return;
+    // MD5/SHA patterns
+    const hexPattern = /[a-f0-9]{20,}/gi;
+    let match;
+    while ((match = hexPattern.exec(this.pathname)) !== null) {
+      tokens.push({
+        value: match[0],
+        index: match.index,
+        type: 'hex',
+        length: match[0].length
+      });
+    }
     
-    const lastNum = parseInt(matches[matches.length - 1]);
-    
-    for (let offset = -this.range; offset <= this.range; offset++) {
-      if (offset === 0) continue;
-      const newNum = lastNum + offset;
-      if (newNum > 0) {
-        yield this.baseUrl.replace(new RegExp(`\\b${lastNum}\\b`), newNum);
+    // Base64-like tokens (alphanumeric + dash/underscore, 20+ chars)
+    const base64Pattern = /[A-Za-z0-9_-]{20,}/g;
+    while ((match = base64Pattern.exec(this.pathname)) !== null) {
+      // Skip if already matched as hex
+      if (!tokens.some(t => t.index === match.index)) {
+        tokens.push({
+          value: match[0],
+          index: match.index,
+          type: 'base64',
+          length: match[0].length
+        });
       }
     }
+    
+    return tokens;
   }
 
-  // Strategy 2: Hash variations
-  *hashFuzzer() {
-    const hashPatterns = [
-      /[a-f0-9]{32}/i,
-      /[a-f0-9]{40}/i,
-      /[a-f0-9]{64}/i
-    ];
+  // Hashcat-style mask fuzzing: replace random characters in token
+  *maskFuzzer(token, mutations = 5) {
+    const chars = token.split('');
+    const charset = this.charsets.all;
     
-    for (const pattern of hashPatterns) {
-      const match = this.pathname.match(pattern);
-      if (match) {
-        const originalHash = match[0];
-        const hashLength = originalHash.length;
-        
-        for (let i = 0; i < this.range; i++) {
-          const randomHash = crypto.randomBytes(hashLength / 2).toString('hex').substring(0, hashLength);
-          yield this.baseUrl.replace(originalHash, randomHash);
-        }
-        return;
-      }
-    }
-  }
-
-  // Strategy 3: Charset fuzzing
-  *charsetFuzzer() {
-    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_';
-    const hashPatterns = [/[a-zA-Z0-9_-]{10,}/];
-    
-    for (const pattern of hashPatterns) {
-      const matches = this.pathname.match(pattern);
-      if (matches) {
-        for (let i = 0; i < this.range; i++) {
-          let randomString = '';
-          for (let j = 0; j < matches[0].length; j++) {
-            randomString += charset[Math.floor(Math.random() * charset.length)];
-          }
-          yield this.baseUrl.replace(matches[0], randomString);
-        }
-        return;
-      }
-    }
-  }
-
-  // Strategy 4: Date fuzzing
-  *dateFuzzer() {
-    const datePatterns = [
-      /\d{4}-\d{2}-\d{2}/,
-      /\d{8}/
-    ];
-    
-    for (const pattern of datePatterns) {
-      const match = this.pathname.match(pattern);
-      if (match) {
-        const baseDate = new Date();
-        
-        for (let i = -this.range; i <= this.range; i++) {
-          const newDate = new Date(baseDate);
-          newDate.setDate(newDate.getDate() + i);
-          
-          let dateStr;
-          if (pattern.test('2023-01-01')) {
-            dateStr = newDate.toISOString().split('T')[0];
-          } else {
-            dateStr = newDate.toISOString().split('T')[0].replace(/-/g, '');
-          }
-          
-          if (dateStr !== match[0]) {
-            yield this.baseUrl.replace(match[0], dateStr);
-          }
-        }
-        return;
-      }
-    }
-  }
-
-  // Strategy 5: Padded ID fuzzing
-  *paddedIdFuzzer() {
-    const paddedPattern = /\d{4,8}/;
-    const match = this.pathname.match(paddedPattern);
-    
-    if (match) {
-      const baseNum = parseInt(match[0]);
-      const padding = match[0].length;
+    for (let mutationNum = 0; mutationNum < this.range; mutationNum++) {
+      // Randomly select 1-3 character positions to replace
+      const numMutations = Math.min(mutations, Math.max(1, Math.floor(Math.random() * 3) + 1));
+      const positions = new Set();
       
-      for (let offset = -this.range; offset <= this.range; offset++) {
-        if (offset === 0) continue;
-        const newNum = baseNum + offset;
-        if (newNum > 0) {
-          const paddedNum = String(newNum).padStart(padding, '0');
-          yield this.baseUrl.replace(match[0], paddedNum);
+      while (positions.size < numMutations) {
+        positions.add(Math.floor(Math.random() * chars.length));
+      }
+      
+      const mutated = [...chars];
+      for (const pos of positions) {
+        mutated[pos] = charset[Math.floor(Math.random() * charset.length)];
+      }
+      
+      const newToken = mutated.join('');
+      yield this.baseUrl.replace(token, newToken);
+    }
+  }
+
+  // Targeted character replacement on hex strings
+  *hexMutator(token) {
+    const hexChars = this.charsets.hex;
+    const chars = token.split('');
+    
+    for (let i = 0; i < this.range; i++) {
+      const mutated = [...chars];
+      // Replace 1-2 random hex digits
+      for (let j = 0; j < Math.max(1, Math.floor(Math.random() * 2) + 1); j++) {
+        const pos = Math.floor(Math.random() * chars.length);
+        mutated[pos] = hexChars[Math.floor(Math.random() * hexChars.length)];
+      }
+      
+      const newToken = mutated.join('');
+      yield this.baseUrl.replace(token, newToken);
+    }
+  }
+
+  // Dictionary-style fuzzing: replace whole token segments
+  *dictionaryMutator(token) {
+    const charset = this.charsets.all;
+    const segmentSize = Math.floor(token.length / 3);
+    
+    for (let i = 0; i < this.range; i++) {
+      let newToken = token;
+      
+      // Replace 1-2 segments
+      const numSegments = Math.random() > 0.5 ? 1 : 2;
+      for (let s = 0; s < numSegments; s++) {
+        const startPos = Math.floor(Math.random() * (token.length - segmentSize));
+        let replacement = '';
+        for (let c = 0; c < segmentSize; c++) {
+          replacement += charset[Math.floor(Math.random() * charset.length)];
         }
+        newToken = newToken.substring(0, startPos) + replacement + newToken.substring(startPos + segmentSize);
+      }
+      
+      yield this.baseUrl.replace(token, newToken);
+    }
+  }
+
+  // Substitute similar-looking characters
+  *substitutionMutator(token) {
+    const substitutions = {
+      '0': ['O'],
+      'O': ['0'],
+      '1': ['I', 'l'],
+      'I': ['1', 'l'],
+      'l': ['1', 'I'],
+      'a': ['e'],
+      'e': ['a'],
+      'o': ['0'],
+      's': ['5'],
+      '5': ['s'],
+      'b': ['8', 'd'],
+      '8': ['b'],
+      't': ['7']
+    };
+    
+    for (let i = 0; i < this.range; i++) {
+      const chars = token.split('');
+      const pos = Math.floor(Math.random() * chars.length);
+      const char = chars[pos];
+      
+      if (substitutions[char]) {
+        const alternatives = substitutions[char];
+        chars[pos] = alternatives[Math.floor(Math.random() * alternatives.length)];
+        const newToken = chars.join('');
+        yield this.baseUrl.replace(token, newToken);
       }
     }
   }
 
-  // Generate all variations
+  // Main fuzzer: generate mutations across all tokens
   *generateAll() {
-    yield* this.numericIdFuzzer();
-    yield* this.hashFuzzer();
-    yield* this.charsetFuzzer();
-    yield* this.dateFuzzer();
-    yield* this.paddedIdFuzzer();
+    const tokens = this.findTokens();
+    console.log(`Found ${tokens.length} token(s) to fuzz: ${tokens.map(t => t.value.substring(0, 10) + '...').join(', ')}`);
+    
+    if (tokens.length === 0) return;
+    
+    // Cycle through different fuzzing strategies
+    const strategies = [
+      { gen: (t) => this.maskFuzzer(t, 3), name: 'mask' },
+      { gen: (t) => this.hexMutator(t), name: 'hex' },
+      { gen: (t) => this.dictionaryMutator(t), name: 'dict' },
+      { gen: (t) => this.substitutionMutator(t), name: 'sub' }
+    ];
+    
+    let generated = 0;
+    let strategyIndex = 0;
+    
+    while (generated < this.range) {
+      for (const token of tokens) {
+        const strategy = strategies[strategyIndex % strategies.length];
+        
+        try {
+          for (const url of strategy.gen(token.value)) {
+            if (generated >= this.range) return;
+            yield url;
+            generated++;
+          }
+        } catch (e) {
+          // Skip failed generations
+        }
+        
+        strategyIndex++;
+      }
+    }
   }
 }
 
@@ -159,7 +215,6 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      // Use GET to fetch actual content and detect duplicates
       const response = await axios.get(url, {
         timeout,
         maxRedirects: 3,
@@ -169,7 +224,7 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
         httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
       });
       
-      // Ignore 304 Not Modified (cached responses)
+      // Ignore 304 Not Modified
       if (response.status === 304) {
         return {
           url,
@@ -182,7 +237,6 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
         };
       }
       
-      // Only accept 200 OK
       if (response.status !== 200) {
         return {
           url,
@@ -198,7 +252,7 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
       const contentLength = response.data.length;
       const contentType = response.headers['content-type'] || 'unknown';
       
-      // Reject if not actually an image
+      // Must be actual image
       if (!contentType.includes('image/')) {
         return {
           url,
@@ -211,7 +265,7 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
         };
       }
       
-      // Reject if too small (likely placeholder or error)
+      // Reject tiny files
       if (contentLength < 1500) {
         return {
           url,
@@ -225,10 +279,8 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
         };
       }
       
-      // Calculate MD5 hash of actual image content for deduplication
+      // Hash content for deduplication
       const contentHash = crypto.createHash('md5').update(response.data).digest('hex');
-      
-      // Check if we've seen this exact image before
       const isDuplicate = contentHashMap.has(contentHash);
       
       if (!isDuplicate) {
@@ -242,8 +294,7 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
         contentLength,
         contentType,
         hash: contentHash,
-        isDuplicate,
-        redirectUrl: response.request.path !== new URL(url).pathname ? response.config.url : null
+        isDuplicate
       };
       
     } catch (error) {
@@ -263,7 +314,7 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
   }
 }
 
-// Classify discovered URL
+// Classify result
 function classifyURL(data) {
   if (!data.found) return 'error';
   if (data.isDuplicate) return 'duplicate';
@@ -304,11 +355,13 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
   let totalGenerated = 0;
   const urlQueue = [];
   const seenUrls = new Set(referenceUrls);
-  const contentHashMap = new Map(); // Track unique image content
+  const contentHashMap = new Map();
   
-  // Generate URLs from all reference URLs
+  // Generate fuzzy mutations from reference URLs
   for (const baseUrl of referenceUrls) {
-    const bruteForcer = new URLBruteForcer(baseUrl, range);
+    const bruteForcer = new MaskBasedBruteForcer(baseUrl, range);
+    
+    console.log(`[${sessionKey}] Starting mask-based fuzzing on: ${baseUrl}`);
     
     for (const url of bruteForcer.generateAll()) {
       if (!seenUrls.has(url) && urlQueue.length < maxRequests) {
@@ -323,9 +376,9 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     if (totalGenerated >= maxRequests) break;
   }
   
-  console.log(`[${sessionKey}] Generated ${totalGenerated} URL variations to brute force`);
+  console.log(`[${sessionKey}] Generated ${totalGenerated} fuzzy URL mutations`);
   
-  // Process queue with concurrency
+  // Process with concurrency
   for (let i = 0; i < urlQueue.length; i += concurrency) {
     if (!session.active) break;
     
@@ -341,7 +394,7 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
         const classification = classifyURL(result);
         session.stats[classification]++;
         
-        // Only store genuinely new images (not duplicates)
+        // Store unique images
         if (classification === 'new' || classification === 'placeholder') {
           session.results.push({
             url: result.url,
@@ -367,7 +420,7 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     }
   }
   
-  console.log(`[${sessionKey}] Scan complete. Unique images: ${session.stats.new + session.stats.placeholder} (filtered ${session.stats.duplicate} duplicates)`);
+  console.log(`[${sessionKey}] Fuzzing complete. Found ${session.stats.new} unique new images`);
   session.active = false;
 }
 
