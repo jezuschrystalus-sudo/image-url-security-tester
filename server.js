@@ -145,46 +145,96 @@ class URLBruteForcer {
   }
 }
 
-// Check if URL returns 200 and has content
-async function checkURL(url, timeout = 3000) {
-  try {
-    const response = await axios.head(url, {
-      timeout,
-      maxRedirects: 2,
-      validateStatus: () => true,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+// Cloudflare-aware HTTP client
+async function checkURL(url, timeout = 5000, retries = 3) {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Referer': 'https://www.google.com/',
+    'Sec-Fetch-Dest': 'image',
+    'Sec-Fetch-Mode': 'no-cors',
+    'Sec-Fetch-Site': 'cross-site',
+    'DNT': '1'
+  };
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const response = await axios.head(url, {
+        timeout,
+        maxRedirects: 2,
+        validateStatus: () => true,
+        headers,
+        // Disable certificate validation for self-signed certs
+        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+      });
+      
+      const contentLength = parseInt(response.headers['content-length'] || 0);
+      const contentType = response.headers['content-type'] || 'unknown';
+      
+      // Detect Cloudflare challenge pages
+      if (response.status === 403 || response.status === 429) {
+        // Rate limited or blocked - try again with delay
+        if (attempt < retries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
       }
-    });
-    
-    const contentLength = parseInt(response.headers['content-length'] || 0);
-    
-    return {
-      url,
-      status: response.status,
-      found: response.status === 200,
-      contentLength,
-      contentType: response.headers['content-type'] || 'unknown'
-    };
-  } catch (error) {
-    return {
-      url,
-      status: 'timeout',
-      found: false,
-      contentLength: 0,
-      error: error.message
-    };
+      
+      // Filter out Cloudflare challenge pages and error pages
+      if (response.status === 200 && contentLength > 0 && !contentType.includes('text/html')) {
+        return {
+          url,
+          status: response.status,
+          found: true,
+          contentLength,
+          contentType
+        };
+      }
+      
+      if (response.status === 200) {
+        // Check if it's actually an image
+        if (contentType.includes('image/')) {
+          return {
+            url,
+            status: response.status,
+            found: true,
+            contentLength,
+            contentType
+          };
+        }
+      }
+      
+      return {
+        url,
+        status: response.status,
+        found: false,
+        contentLength,
+        contentType
+      };
+      
+    } catch (error) {
+      // Last attempt failed
+      if (attempt === retries - 1) {
+        return {
+          url,
+          status: 'timeout',
+          found: false,
+          contentLength: 0,
+          error: error.message
+        };
+      }
+      // Retry with exponential backoff
+      await new Promise(resolve => setTimeout(resolve, 500 * Math.pow(2, attempt)));
+    }
   }
 }
 
 // Classify discovered URL
 function classifyURL(data) {
   if (!data.found) return 'error';
-  
-  // Check if it's actually an image
-  if (!data.contentType.includes('image')) {
-    return 'non-image';
-  }
   
   // Placeholder detection (very small images)
   if (data.contentLength < 2000) {
@@ -209,7 +259,7 @@ app.post('/api/scan', async (req, res) => {
     scanSessions.set(sessionKey, {
       active: true,
       results: [],
-      stats: { scanned: 0, new: 0, placeholder: 0, 'non-image': 0, error: 0 },
+      stats: { scanned: 0, new: 0, placeholder: 0, error: 0 },
       startTime: Date.now()
     });
   }
@@ -264,8 +314,8 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
         const classification = classifyURL(result);
         session.stats[classification]++;
         
-        // Only store successful finds (not errors)
-        if (classification !== 'error' && classification !== 'non-image') {
+        // Only store successful finds
+        if (classification !== 'error') {
           session.results.push({
             url: result.url,
             status: result.status,
@@ -282,7 +332,7 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     
     // Progress logging
     const elapsed = Math.round((Date.now() - session.startTime) / 1000);
-    const rate = Math.round(session.stats.scanned / elapsed);
+    const rate = Math.round(session.stats.scanned / (elapsed || 1));
     console.log(`[${sessionKey}] ${session.stats.scanned}/${urlQueue.length} | New: ${session.stats.new} | Placeholders: ${session.stats.placeholder} | Rate: ${rate} req/s`);
     
     // Delay between batches
