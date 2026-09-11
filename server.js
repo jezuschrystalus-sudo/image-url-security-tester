@@ -1,6 +1,5 @@
 const express = require('express');
 const axios = require('axios');
-const path = require('path');
 const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,76 +7,190 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static('public'));
 
-// Store for tracking found URLs and their hashes
-const imageCache = new Map();
 const scanSessions = new Map();
 
-// Generate variations of URL
-function generateURLVariations(baseUrl, range) {
-  const variations = [];
-  const urlObj = new URL(baseUrl);
-  const pathname = urlObj.pathname;
-  
-  // Extract numeric parts and create variations
-  const numericPattern = /(\d+)/g;
-  const matches = pathname.match(numericPattern);
-  
-  if (matches) {
-    const baseNum = parseInt(matches[0]);
-    for (let i = 1; i <= range; i++) {
-      const newNum = baseNum + i;
-      const newUrl = baseUrl.replace(/\d+/, newNum);
-      variations.push(newUrl);
+// Hashcat-style URL generators
+class URLBruteForcer {
+  constructor(baseUrl, range) {
+    this.baseUrl = baseUrl;
+    this.range = range;
+    this.urlObj = new URL(baseUrl);
+    this.pathname = this.urlObj.pathname;
+  }
+
+  // Strategy 1: Numeric ID fuzzing (e.g., /image/123.jpg -> /image/124.jpg, 125.jpg, etc)
+  *numericIdFuzzer() {
+    const numericPattern = /(\d+)/g;
+    const matches = this.pathname.match(numericPattern);
+    
+    if (!matches) return;
+    
+    const lastNum = parseInt(matches[matches.length - 1]);
+    
+    // Fuzz upward and downward
+    for (let offset = -this.range; offset <= this.range; offset++) {
+      if (offset === 0) continue;
+      const newNum = lastNum + offset;
+      if (newNum > 0) {
+        yield this.baseUrl.replace(new RegExp(`\\b${lastNum}\\b`), newNum);
+      }
     }
   }
-  
-  return variations;
+
+  // Strategy 2: Hash variations (MD5, SHA1 style)
+  *hashFuzzer() {
+    const hashPatterns = [
+      /[a-f0-9]{32}/i,  // MD5
+      /[a-f0-9]{40}/i,  // SHA1
+      /[a-f0-9]{64}/i   // SHA256
+    ];
+    
+    for (const pattern of hashPatterns) {
+      const match = this.pathname.match(pattern);
+      if (match) {
+        const originalHash = match[0];
+        const hashLength = originalHash.length;
+        
+        // Generate variations
+        for (let i = 0; i < this.range; i++) {
+          const randomHash = crypto.randomBytes(hashLength / 2).toString('hex').substring(0, hashLength);
+          yield this.baseUrl.replace(originalHash, randomHash);
+        }
+        return;
+      }
+    }
+  }
+
+  // Strategy 3: Character set fuzzing (alphanumeric substitution)
+  *charsetFuzzer() {
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_';
+    const hashPatterns = [
+      /[a-zA-Z0-9_-]{10,}/
+    ];
+    
+    for (const pattern of hashPatterns) {
+      const matches = this.pathname.match(pattern);
+      if (matches) {
+        for (let i = 0; i < this.range; i++) {
+          let randomString = '';
+          for (let j = 0; j < matches[0].length; j++) {
+            randomString += charset[Math.floor(Math.random() * charset.length)];
+          }
+          yield this.baseUrl.replace(matches[0], randomString);
+        }
+        return;
+      }
+    }
+  }
+
+  // Strategy 4: Date/timestamp fuzzing
+  *dateFuzzer() {
+    const datePatterns = [
+      /\d{4}-\d{2}-\d{2}/,  // YYYY-MM-DD
+      /\d{8}/               // YYYYMMDD
+    ];
+    
+    for (const pattern of datePatterns) {
+      const match = this.pathname.match(pattern);
+      if (match) {
+        const baseDate = new Date();
+        
+        for (let i = -this.range; i <= this.range; i++) {
+          const newDate = new Date(baseDate);
+          newDate.setDate(newDate.getDate() + i);
+          
+          let dateStr;
+          if (pattern.test('2023-01-01')) {
+            dateStr = newDate.toISOString().split('T')[0];
+          } else {
+            dateStr = newDate.toISOString().split('T')[0].replace(/-/g, '');
+          }
+          
+          if (dateStr !== match[0]) {
+            yield this.baseUrl.replace(match[0], dateStr);
+          }
+        }
+        return;
+      }
+    }
+  }
+
+  // Strategy 5: Sequential ID with padding
+  *paddedIdFuzzer() {
+    const paddedPattern = /\d{4,8}/;
+    const match = this.pathname.match(paddedPattern);
+    
+    if (match) {
+      const baseNum = parseInt(match[0]);
+      const padding = match[0].length;
+      
+      for (let offset = -this.range; offset <= this.range; offset++) {
+        if (offset === 0) continue;
+        const newNum = baseNum + offset;
+        if (newNum > 0) {
+          const paddedNum = String(newNum).padStart(padding, '0');
+          yield this.baseUrl.replace(match[0], paddedNum);
+        }
+      }
+    }
+  }
+
+  // Generate all variations
+  *generateAll() {
+    yield* this.numericIdFuzzer();
+    yield* this.hashFuzzer();
+    yield* this.charsetFuzzer();
+    yield* this.dateFuzzer();
+    yield* this.paddedIdFuzzer();
+  }
 }
 
-// Check if image exists and is valid
-async function checkImage(url, timeout = 5000) {
+// Check if URL returns 200 and has content
+async function checkURL(url, timeout = 3000) {
   try {
     const response = await axios.head(url, {
       timeout,
-      maxRedirects: 5,
-      validateStatus: (status) => status < 500
+      maxRedirects: 2,
+      validateStatus: () => true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
     });
     
-    if (response.status === 200) {
-      const contentType = response.headers['content-type'] || '';
-      const contentLength = response.headers['content-length'] || 0;
-      const hash = crypto.createHash('md5').update(url).digest('hex');
-      
-      return {
-        status: response.status,
-        contentType,
-        contentLength: parseInt(contentLength),
-        url,
-        hash,
-        found: true
-      };
-    }
+    const contentLength = parseInt(response.headers['content-length'] || 0);
     
     return {
+      url,
       status: response.status,
-      found: false,
-      url
+      found: response.status === 200,
+      contentLength,
+      contentType: response.headers['content-type'] || 'unknown'
     };
   } catch (error) {
     return {
-      status: 'error',
-      error: error.message,
+      url,
+      status: 'timeout',
       found: false,
-      url
+      contentLength: 0,
+      error: error.message
     };
   }
 }
 
-// Classify result
-function classifyResult(data, knownUrls) {
+// Classify discovered URL
+function classifyURL(data) {
   if (!data.found) return 'error';
-  if (knownUrls.some(u => u === data.url)) return 'duplicate';
-  if (data.contentLength < 5000) return 'placeholder';
+  
+  // Check if it's actually an image
+  if (!data.contentType.includes('image')) {
+    return 'non-image';
+  }
+  
+  // Placeholder detection (very small images)
+  if (data.contentLength < 2000) {
+    return 'placeholder';
+  }
+  
   return 'new';
 }
 
@@ -96,75 +209,93 @@ app.post('/api/scan', async (req, res) => {
     scanSessions.set(sessionKey, {
       active: true,
       results: [],
-      stats: { scanned: 0, new: 0, placeholder: 0, duplicate: 0, error: 0 }
+      stats: { scanned: 0, new: 0, placeholder: 0, 'non-image': 0, error: 0 },
+      startTime: Date.now()
     });
   }
   
   res.json({ sessionId: sessionKey });
   
   // Start scanning in background
-  performScan(urls, range, delay, concurrency, maxRequests, sessionKey);
+  performBruteForceScan(urls, range, delay, concurrency, maxRequests, sessionKey);
 });
 
-// Perform actual scanning
-async function performScan(referenceUrls, range, delay, concurrency, maxRequests, sessionKey) {
+// Perform brute force scan
+async function performBruteForceScan(referenceUrls, range, delay, concurrency, maxRequests, sessionKey) {
   const session = scanSessions.get(sessionKey);
   if (!session) return;
   
-  const queue = [];
-  const knownUrls = new Set(referenceUrls);
-  let scanned = 0;
+  let totalGenerated = 0;
+  const urlQueue = [];
+  const seenUrls = new Set(referenceUrls);
   
-  // Generate all variations
-  for (const url of referenceUrls) {
-    const variations = generateURLVariations(url, range);
-    queue.push(...variations);
+  // Generate URLs from all reference URLs
+  for (const baseUrl of referenceUrls) {
+    const bruteForcer = new URLBruteForcer(baseUrl, range);
+    
+    for (const url of bruteForcer.generateAll()) {
+      if (!seenUrls.has(url) && urlQueue.length < maxRequests) {
+        urlQueue.push(url);
+        seenUrls.add(url);
+        totalGenerated++;
+        
+        if (totalGenerated >= maxRequests) break;
+      }
+    }
+    
+    if (totalGenerated >= maxRequests) break;
   }
   
-  // Limit requests
-  const urlsToCheck = queue.slice(0, Math.min(maxRequests, queue.length));
+  console.log(`[${sessionKey}] Generated ${totalGenerated} URL variations to brute force`);
   
-  // Process with concurrency limit
-  for (let i = 0; i < urlsToCheck.length; i += concurrency) {
+  // Process queue with concurrency
+  for (let i = 0; i < urlQueue.length; i += concurrency) {
     if (!session.active) break;
     
-    const batch = urlsToCheck.slice(i, i + concurrency);
-    const promises = batch.map(url => checkImage(url));
+    const batch = urlQueue.slice(i, i + concurrency);
+    const promises = batch.map(url => checkURL(url));
     
     const results = await Promise.all(promises);
     
     for (const result of results) {
-      const classification = classifyResult(result, Array.from(knownUrls));
+      session.stats.scanned++;
       
       if (result.found) {
-        session.results.push({
-          url: result.url,
-          status: result.status,
-          contentType: result.contentType,
-          contentLength: result.contentLength,
-          classification,
-          timestamp: new Date()
-        });
-        
+        const classification = classifyURL(result);
         session.stats[classification]++;
-      } else if (classification === 'error') {
+        
+        // Only store successful finds (not errors)
+        if (classification !== 'error' && classification !== 'non-image') {
+          session.results.push({
+            url: result.url,
+            status: result.status,
+            contentType: result.contentType,
+            contentLength: result.contentLength,
+            classification,
+            timestamp: new Date()
+          });
+        }
+      } else {
         session.stats.error++;
       }
-      
-      session.stats.scanned++;
-      scanned++;
     }
     
-    // Add delay between batches
-    if (i + concurrency < urlsToCheck.length) {
+    // Progress logging
+    const elapsed = Math.round((Date.now() - session.startTime) / 1000);
+    const rate = Math.round(session.stats.scanned / elapsed);
+    console.log(`[${sessionKey}] ${session.stats.scanned}/${urlQueue.length} | New: ${session.stats.new} | Placeholders: ${session.stats.placeholder} | Rate: ${rate} req/s`);
+    
+    // Delay between batches
+    if (i + concurrency < urlQueue.length && delay > 0) {
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   
+  console.log(`[${sessionKey}] Brute force complete. Found ${session.stats.new} new images, ${session.stats.placeholder} placeholders`);
   session.active = false;
 }
 
-// Get scan progress endpoint
+// Get progress
 app.get('/api/progress/:sessionId', (req, res) => {
   const session = scanSessions.get(req.params.sessionId);
   
@@ -175,12 +306,12 @@ app.get('/api/progress/:sessionId', (req, res) => {
   res.json({
     active: session.active,
     stats: session.stats,
-    results: session.results.slice(-50), // Return last 50 results
+    results: session.results.slice(-50),
     totalResults: session.results.length
   });
 });
 
-// Stop scan endpoint
+// Stop scan
 app.post('/api/stop/:sessionId', (req, res) => {
   const session = scanSessions.get(req.params.sessionId);
   
@@ -191,7 +322,7 @@ app.post('/api/stop/:sessionId', (req, res) => {
   res.json({ success: true });
 });
 
-// Export results endpoint
+// Export results
 app.get('/api/export/:sessionId', (req, res) => {
   const session = scanSessions.get(req.params.sessionId);
   
@@ -203,5 +334,5 @@ app.get('/api/export/:sessionId', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`🔓 Image URL Brute Forcer running on http://localhost:${PORT}`);
 });
