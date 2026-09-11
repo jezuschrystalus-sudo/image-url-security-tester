@@ -18,7 +18,7 @@ class URLBruteForcer {
     this.pathname = this.urlObj.pathname;
   }
 
-  // Strategy 1: Numeric ID fuzzing (e.g., /image/123.jpg -> /image/124.jpg, 125.jpg, etc)
+  // Strategy 1: Numeric ID fuzzing
   *numericIdFuzzer() {
     const numericPattern = /(\d+)/g;
     const matches = this.pathname.match(numericPattern);
@@ -27,7 +27,6 @@ class URLBruteForcer {
     
     const lastNum = parseInt(matches[matches.length - 1]);
     
-    // Fuzz upward and downward
     for (let offset = -this.range; offset <= this.range; offset++) {
       if (offset === 0) continue;
       const newNum = lastNum + offset;
@@ -37,12 +36,12 @@ class URLBruteForcer {
     }
   }
 
-  // Strategy 2: Hash variations (MD5, SHA1 style)
+  // Strategy 2: Hash variations
   *hashFuzzer() {
     const hashPatterns = [
-      /[a-f0-9]{32}/i,  // MD5
-      /[a-f0-9]{40}/i,  // SHA1
-      /[a-f0-9]{64}/i   // SHA256
+      /[a-f0-9]{32}/i,
+      /[a-f0-9]{40}/i,
+      /[a-f0-9]{64}/i
     ];
     
     for (const pattern of hashPatterns) {
@@ -51,7 +50,6 @@ class URLBruteForcer {
         const originalHash = match[0];
         const hashLength = originalHash.length;
         
-        // Generate variations
         for (let i = 0; i < this.range; i++) {
           const randomHash = crypto.randomBytes(hashLength / 2).toString('hex').substring(0, hashLength);
           yield this.baseUrl.replace(originalHash, randomHash);
@@ -61,12 +59,10 @@ class URLBruteForcer {
     }
   }
 
-  // Strategy 3: Character set fuzzing (alphanumeric substitution)
+  // Strategy 3: Charset fuzzing
   *charsetFuzzer() {
     const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_';
-    const hashPatterns = [
-      /[a-zA-Z0-9_-]{10,}/
-    ];
+    const hashPatterns = [/[a-zA-Z0-9_-]{10,}/];
     
     for (const pattern of hashPatterns) {
       const matches = this.pathname.match(pattern);
@@ -83,11 +79,11 @@ class URLBruteForcer {
     }
   }
 
-  // Strategy 4: Date/timestamp fuzzing
+  // Strategy 4: Date fuzzing
   *dateFuzzer() {
     const datePatterns = [
-      /\d{4}-\d{2}-\d{2}/,  // YYYY-MM-DD
-      /\d{8}/               // YYYYMMDD
+      /\d{4}-\d{2}-\d{2}/,
+      /\d{8}/
     ];
     
     for (const pattern of datePatterns) {
@@ -115,7 +111,7 @@ class URLBruteForcer {
     }
   }
 
-  // Strategy 5: Sequential ID with padding
+  // Strategy 5: Padded ID fuzzing
   *paddedIdFuzzer() {
     const paddedPattern = /\d{4,8}/;
     const match = this.pathname.match(paddedPattern);
@@ -145,14 +141,15 @@ class URLBruteForcer {
   }
 }
 
-// Cloudflare-aware HTTP client
-async function checkURL(url, timeout = 5000, retries = 3) {
+// Smart content-aware HTTP client with duplicate detection
+async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new Map()) {
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+    'Accept': 'image/*,*/*',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
     'Pragma': 'no-cache',
+    'Expires': '0',
     'Referer': 'https://www.google.com/',
     'Sec-Fetch-Dest': 'image',
     'Sec-Fetch-Mode': 'no-cors',
@@ -162,71 +159,105 @@ async function checkURL(url, timeout = 5000, retries = 3) {
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const response = await axios.head(url, {
+      // Use GET to fetch actual content and detect duplicates
+      const response = await axios.get(url, {
         timeout,
-        maxRedirects: 2,
-        validateStatus: () => true,
+        maxRedirects: 3,
+        validateStatus: (status) => status < 500,
         headers,
-        // Disable certificate validation for self-signed certs
+        responseType: 'arraybuffer',
         httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
       });
       
-      const contentLength = parseInt(response.headers['content-length'] || 0);
-      const contentType = response.headers['content-type'] || 'unknown';
-      
-      // Detect Cloudflare challenge pages
-      if (response.status === 403 || response.status === 429) {
-        // Rate limited or blocked - try again with delay
-        if (attempt < retries - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-          continue;
-        }
-      }
-      
-      // Filter out Cloudflare challenge pages and error pages
-      if (response.status === 200 && contentLength > 0 && !contentType.includes('text/html')) {
+      // Ignore 304 Not Modified (cached responses)
+      if (response.status === 304) {
         return {
           url,
-          status: response.status,
-          found: true,
-          contentLength,
-          contentType
+          status: 304,
+          found: false,
+          contentLength: 0,
+          contentType: 'cached',
+          hash: null,
+          isDuplicate: false
         };
       }
       
-      if (response.status === 200) {
-        // Check if it's actually an image
-        if (contentType.includes('image/')) {
-          return {
-            url,
-            status: response.status,
-            found: true,
-            contentLength,
-            contentType
-          };
-        }
+      // Only accept 200 OK
+      if (response.status !== 200) {
+        return {
+          url,
+          status: response.status,
+          found: false,
+          contentLength: 0,
+          contentType: response.headers['content-type'] || 'unknown',
+          hash: null,
+          isDuplicate: false
+        };
+      }
+      
+      const contentLength = response.data.length;
+      const contentType = response.headers['content-type'] || 'unknown';
+      
+      // Reject if not actually an image
+      if (!contentType.includes('image/')) {
+        return {
+          url,
+          status: 200,
+          found: false,
+          contentLength,
+          contentType,
+          hash: null,
+          isDuplicate: false
+        };
+      }
+      
+      // Reject if too small (likely placeholder or error)
+      if (contentLength < 1500) {
+        return {
+          url,
+          status: 200,
+          found: false,
+          contentLength,
+          contentType,
+          hash: null,
+          isDuplicate: false,
+          reason: 'too_small'
+        };
+      }
+      
+      // Calculate MD5 hash of actual image content for deduplication
+      const contentHash = crypto.createHash('md5').update(response.data).digest('hex');
+      
+      // Check if we've seen this exact image before
+      const isDuplicate = contentHashMap.has(contentHash);
+      
+      if (!isDuplicate) {
+        contentHashMap.set(contentHash, url);
       }
       
       return {
         url,
-        status: response.status,
-        found: false,
+        status: 200,
+        found: true,
         contentLength,
-        contentType
+        contentType,
+        hash: contentHash,
+        isDuplicate,
+        redirectUrl: response.request.path !== new URL(url).pathname ? response.config.url : null
       };
       
     } catch (error) {
-      // Last attempt failed
       if (attempt === retries - 1) {
         return {
           url,
           status: 'timeout',
           found: false,
           contentLength: 0,
-          error: error.message
+          error: error.message,
+          hash: null,
+          isDuplicate: false
         };
       }
-      // Retry with exponential backoff
       await new Promise(resolve => setTimeout(resolve, 500 * Math.pow(2, attempt)));
     }
   }
@@ -235,12 +266,8 @@ async function checkURL(url, timeout = 5000, retries = 3) {
 // Classify discovered URL
 function classifyURL(data) {
   if (!data.found) return 'error';
-  
-  // Placeholder detection (very small images)
-  if (data.contentLength < 2000) {
-    return 'placeholder';
-  }
-  
+  if (data.isDuplicate) return 'duplicate';
+  if (data.contentLength < 3000) return 'placeholder';
   return 'new';
 }
 
@@ -259,14 +286,13 @@ app.post('/api/scan', async (req, res) => {
     scanSessions.set(sessionKey, {
       active: true,
       results: [],
-      stats: { scanned: 0, new: 0, placeholder: 0, error: 0 },
+      stats: { scanned: 0, new: 0, placeholder: 0, duplicate: 0, error: 0 },
       startTime: Date.now()
     });
   }
   
   res.json({ sessionId: sessionKey });
   
-  // Start scanning in background
   performBruteForceScan(urls, range, delay, concurrency, maxRequests, sessionKey);
 });
 
@@ -278,6 +304,7 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
   let totalGenerated = 0;
   const urlQueue = [];
   const seenUrls = new Set(referenceUrls);
+  const contentHashMap = new Map(); // Track unique image content
   
   // Generate URLs from all reference URLs
   for (const baseUrl of referenceUrls) {
@@ -303,7 +330,7 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     if (!session.active) break;
     
     const batch = urlQueue.slice(i, i + concurrency);
-    const promises = batch.map(url => checkURL(url));
+    const promises = batch.map(url => checkURL(url, 8000, 2, contentHashMap));
     
     const results = await Promise.all(promises);
     
@@ -314,13 +341,14 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
         const classification = classifyURL(result);
         session.stats[classification]++;
         
-        // Only store successful finds
-        if (classification !== 'error') {
+        // Only store genuinely new images (not duplicates)
+        if (classification === 'new' || classification === 'placeholder') {
           session.results.push({
             url: result.url,
             status: result.status,
             contentType: result.contentType,
             contentLength: result.contentLength,
+            hash: result.hash,
             classification,
             timestamp: new Date()
           });
@@ -330,18 +358,16 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
       }
     }
     
-    // Progress logging
     const elapsed = Math.round((Date.now() - session.startTime) / 1000);
     const rate = Math.round(session.stats.scanned / (elapsed || 1));
-    console.log(`[${sessionKey}] ${session.stats.scanned}/${urlQueue.length} | New: ${session.stats.new} | Placeholders: ${session.stats.placeholder} | Rate: ${rate} req/s`);
+    console.log(`[${sessionKey}] ${session.stats.scanned}/${urlQueue.length} | New: ${session.stats.new} | Placeholders: ${session.stats.placeholder} | Dupes: ${session.stats.duplicate} | Rate: ${rate} req/s`);
     
-    // Delay between batches
     if (i + concurrency < urlQueue.length && delay > 0) {
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   
-  console.log(`[${sessionKey}] Brute force complete. Found ${session.stats.new} new images, ${session.stats.placeholder} placeholders`);
+  console.log(`[${sessionKey}] Scan complete. Unique images: ${session.stats.new + session.stats.placeholder} (filtered ${session.stats.duplicate} duplicates)`);
   session.active = false;
 }
 
