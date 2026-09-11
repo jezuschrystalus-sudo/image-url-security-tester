@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image URL Security Tester</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            color: #4ecdc4;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        h2 {
+            font-size: 1.3rem;
+            margin: 20px 0 15px 0;
+            color: #4ecdc4;
+        }
+        
+        .subtitle {
+            color: #a0aec0;
+            font-size: 1.1rem;
+        }
+        
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .panel {
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #4ecdc4;
+        }
+        
+        textarea, input, select, button {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 2px solid #4ecdc4;
+            background: rgba(15, 23, 42, 0.8);
+            color: white;
+            font-size: 1rem;
+        }
+        
+        textarea {
+            min-height: 150px;
+            resize: vertical;
+        }
+        
+        button {
+            background: #4ecdc4;
+            color: #1e293b;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #2a9d8f;
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        button.stop {
+            background: #e53e3e;
+        }
+        
+        button.stop:hover:not(:disabled) {
+            background: #c53030;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .progress-container {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            height: 20px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4ecdc4, #2a9d8f);
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .stat-card {
+            background: rgba(78, 205, 196, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #4ecdc4;
+        }
+        
+        .stat-label {
+            color: #cbd5e0;
+            font-size: 0.9rem;
+        }
+        
+        .filters {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        
+        .filter-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .filter-checkbox input {
+            width: auto;
+            cursor: pointer;
+        }
+        
+        .filter-checkbox label {
+            margin: 0;
+            color: #cbd5e0;
+            cursor: pointer;
+        }
+        
+        .results-container {
+            margin-top: 30px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .result-item {
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid #4ecdc4;
+        }
+        
+        .result-url {
+            font-weight: 600;
+            color: #4ecdc4;
+            word-break: break-all;
+            margin-bottom: 8px;
+        }
+        
+        .result-meta {
+            display: flex;
+            gap: 15px;
+            font-size: 0.9rem;
+            color: #cbd5e0;
+            flex-wrap: wrap;
+        }
+        
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .status-new { background: #48bb78; color: white; }
+        .status-placeholder { background: #ed8936; color: white; }
+        .status-duplicate { background: #4299e1; color: white; }
+        .status-error { background: #e53e3e; color: white; }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #a0aec0;
+        }
+        
+        .instructions {
+            background: rgba(78, 205, 196, 0.1);
+            border-left: 4px solid #4ecdc4;
+            padding: 15px;
+            border-radius: 0 8px 8px 0;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Image URL Security Tester</h1>
+            <p class="subtitle">Discover new images on servers by testing variations of known-valid URLs</p>
+        </header>
+
+        <div class="instructions">
+            <p><strong>How to use:</strong> Paste known-valid image URLs, adjust settings, then click Start to begin scanning for variations.</p>
+        </div>
+
+        <div class="main-content">
+            <div class="panel">
+                <h2>Reference URLs</h2>
+                <div class="form-group">
+                    <label for="reference-urls">Paste Valid Image URLs (one per line)</label>
+                    <textarea id="reference-urls" placeholder="https://example.com/images/1.jpg
+https://example.com/images/2.jpg
+https://example.com/images/3.jpg"></textarea>
+                </div>
+                
+                <h2>Scan Settings</h2>
+                <div class="controls">
+                    <div class="form-group">
+                        <label for="range">Range (# to vary)</label>
+                        <input type="number" id="range" value="50" min="1" max="1000">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="delay">Delay (ms)</label>
+                        <input type="number" id="delay" value="100" min="0">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="concurrency">Concurrency</label>
+                        <input type="number" id="concurrency" value="5" min="1" max="20">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="max-requests">Max Requests</label>
+                        <input type="number" id="max-requests" value="500" min="1">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <button id="start-btn">▶ Start Scan</button>
+                    <button id="stop-btn" class="stop" disabled>⏹ Stop Scan</button>
+                    <button id="export-btn" disabled>📥 Export Results</button>
+                </div>
+                
+                <div class="progress-container">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                
+                <div class="stats">
+                    <div class="stat-card">
+                        <div class="stat-value" id="scanned-count">0</div>
+                        <div class="stat-label">Scanned</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="new-count">0</div>
+                        <div class="stat-label">New Images</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="placeholder-count">0</div>
+                        <div class="stat-label">Placeholders</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="duplicate-count">0</div>
+                        <div class="stat-label">Duplicates</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="error-count">0</div>
+                        <div class="stat-label">Errors</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2>Filter Results</h2>
+                <div class="filters">
+                    <div class="filter-checkbox">
+                        <input type="checkbox" id="show-new" checked>
+                        <label for="show-new">New Images</label>
+                    </div>
+                    <div class="filter-checkbox">
+                        <input type="checkbox" id="show-placeholders" checked>
+                        <label for="show-placeholders">Placeholders</label>
+                    </div>
+                    <div class="filter-checkbox">
+                        <input type="checkbox" id="show-duplicates">
+                        <label for="show-duplicates">Duplicates</label>
+                    </div>
+                    <div class="filter-checkbox">
+                        <input type="checkbox" id="show-errors">
+                        <label for="show-errors">Errors</label>
+                    </div>
+                </div>
+                
+                <h2>Results</h2>
+                <div class="results-container">
+                    <div id="results">
+                        <div class="empty-state">
+                            <p>No results yet. Start a scan to see discovered images.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const progressBar = document.getElementById('progress-bar');
+        const resultsDiv = document.getElementById('results');
+        
+        const scannedCount = document.getElementById('scanned-count');
+        const newCount = document.getElementById('new-count');
+        const placeholderCount = document.getElementById('placeholder-count');
+        const duplicateCount = document.getElementById('duplicate-count');
+        const errorCount = document.getElementById('error-count');
+        
+        let isScanning = false;
+        let currentSessionId = null;
+        let progressInterval = null;
+        let allResults = [];
+        
+        startBtn.addEventListener('click', startScan);
+        stopBtn.addEventListener('click', stopScan);
+        exportBtn.addEventListener('click', exportResults);
+        
+        // Filter results when checkboxes change
+        document.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', refreshDisplay);
+        });
+        
+        async function startScan() {
+            if (isScanning) return;
+            
+            const referenceUrls = document.getElementById('reference-urls').value.trim().split('\n').filter(u => u.trim());
+            if (referenceUrls.length === 0) {
+                alert('Please enter at least one reference URL');
+                return;
+            }
+            
+            const range = parseInt(document.getElementById('range').value);
+            const delay = parseInt(document.getElementById('delay').value);
+            const concurrency = parseInt(document.getElementById('concurrency').value);
+            const maxRequests = parseInt(document.getElementById('max-requests').value);
+            
+            isScanning = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            exportBtn.disabled = true;
+            allResults = [];
+            resultsDiv.innerHTML = '<div class="empty-state"><p>Scanning in progress...</p></div>';
+            
+            try {
+                const response = await fetch('/api/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ referenceUrls, range, delay, concurrency, maxRequests })
+                });
+                
+                const data = await response.json();
+                currentSessionId = data.sessionId;
+                
+                // Update progress every 500ms
+                progressInterval = setInterval(updateProgress, 500);
+            } catch (error) {
+                console.error('Error starting scan:', error);
+                alert('Failed to start scan');
+                isScanning = false;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+        
+        async function updateProgress() {
+            if (!currentSessionId || !isScanning) return;
+            
+            try {
+                const response = await fetch(`/api/progress/${currentSessionId}`);
+                const data = await response.json();
+                
+                const maxScans = parseInt(document.getElementById('max-requests').value);
+                const progress = (data.stats.scanned / maxScans) * 100;
+                progressBar.style.width = Math.min(progress, 100) + '%';
+                
+                scannedCount.textContent = data.stats.scanned.toLocaleString();
+                newCount.textContent = data.stats.new.toLocaleString();
+                placeholderCount.textContent = data.stats.placeholder.toLocaleString();
+                duplicateCount.textContent = data.stats.duplicate.toLocaleString();
+                errorCount.textContent = data.stats.error.toLocaleString();
+                
+                allResults = data.results;
+                refreshDisplay();
+                
+                if (!data.active) {
+                    isScanning = false;
+                    clearInterval(progressInterval);
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    exportBtn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Error updating progress:', error);
+            }
+        }
+        
+        async function stopScan() {
+            if (!currentSessionId) return;
+            
+            try {
+                await fetch(`/api/stop/${currentSessionId}`, { method: 'POST' });
+                isScanning = false;
+                clearInterval(progressInterval);
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                exportBtn.disabled = false;
+            } catch (error) {
+                console.error('Error stopping scan:', error);
+            }
+        }
+        
+        function refreshDisplay() {
+            const showNew = document.getElementById('show-new').checked;
+            const showPlaceholders = document.getElementById('show-placeholders').checked;
+            const showDuplicates = document.getElementById('show-duplicates').checked;
+            const showErrors = document.getElementById('show-errors').checked;
+            
+            const filtered = allResults.filter(result => {
+                if (result.classification === 'new' && !showNew) return false;
+                if (result.classification === 'placeholder' && !showPlaceholders) return false;
+                if (result.classification === 'duplicate' && !showDuplicates) return false;
+                if (result.classification === 'error' && !showErrors) return false;
+                return true;
+            });
+            
+            if (filtered.length === 0) {
+                resultsDiv.innerHTML = '<div class="empty-state"><p>No results match your filters.</p></div>';
+                return;
+            }
+            
+            resultsDiv.innerHTML = filtered.slice(-50).reverse().map(result => `
+                <div class="result-item">
+                    <div class="result-url">${result.url}</div>
+                    <div class="result-meta">
+                        <span>Status: ${result.status}</span>
+                        <span>Size: ${(result.contentLength / 1024).toFixed(1)}KB</span>
+                        <span class="status-badge status-${result.classification}">${result.classification.toUpperCase()}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function exportResults() {
+            if (allResults.length === 0) {
+                alert('No results to export');
+                return;
+            }
+            
+            const csv = 'URL,Status,Size (KB),Classification\n' + 
+                allResults.map(r => `"${r.url}",${r.status},${(r.contentLength / 1024).toFixed(1)},${r.classification}`).join('\n');
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `scan-results-${new Date().getTime()}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
