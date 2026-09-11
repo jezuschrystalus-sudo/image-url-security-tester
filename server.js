@@ -9,196 +9,172 @@ app.use(express.static('public'));
 
 const scanSessions = new Map();
 
-// Hashcat-style mask-based URL fuzzer
-class MaskBasedBruteForcer {
-  constructor(baseUrl, range) {
+// True hashcat brute force mode - exhaustive character enumeration
+class HashcatBruteForceFuzzer {
+  constructor(baseUrl, range, maskPositions = null) {
     this.baseUrl = baseUrl;
     this.range = range;
     this.urlObj = new URL(baseUrl);
     this.pathname = this.urlObj.pathname;
+    this.maskPositions = maskPositions;
     
-    // Character sets for different fuzzing modes
+    // Character sets (like hashcat)
     this.charsets = {
-      'lower': 'abcdefghijklmnopqrstuvwxyz',
-      'upper': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-      'digit': '0123456789',
-      'hex': '0123456789abcdef',
-      'hex_upper': '0123456789ABCDEF',
-      'special': '-_',
-      'all': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'
+      'l': 'abcdefghijklmnopqrstuvwxyz',
+      'u': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+      'd': '0123456789',
+      'h': '0123456789abcdef',
+      'H': '0123456789ABCDEF',
+      's': ' !"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~',
+      'a': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+      '?': 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'
     };
   }
 
-  // Find hash-like tokens in URL (hex strings, base64-like strings)
+  // Find hash-like tokens in URL
   findTokens() {
     const tokens = [];
     
-    // MD5/SHA patterns
-    const hexPattern = /[a-f0-9]{20,}/gi;
-    let match;
-    while ((match = hexPattern.exec(this.pathname)) !== null) {
-      tokens.push({
-        value: match[0],
-        index: match.index,
-        type: 'hex',
-        length: match[0].length
-      });
-    }
+    // Find long alphanumeric/hex sequences (20+ chars)
+    const patterns = [
+      { regex: /[a-f0-9]{20,}/gi, type: 'hex', charset: 'h' },
+      { regex: /[A-Za-z0-9_-]{20,}/g, type: 'base64', charset: '?' }
+    ];
     
-    // Base64-like tokens (alphanumeric + dash/underscore, 20+ chars)
-    const base64Pattern = /[A-Za-z0-9_-]{20,}/g;
-    while ((match = base64Pattern.exec(this.pathname)) !== null) {
-      // Skip if already matched as hex
-      if (!tokens.some(t => t.index === match.index)) {
-        tokens.push({
-          value: match[0],
-          index: match.index,
-          type: 'base64',
-          length: match[0].length
-        });
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.regex.exec(this.pathname)) !== null) {
+        // Check if not already found
+        if (!tokens.some(t => t.index === match.index)) {
+          tokens.push({
+            value: match[0],
+            index: match.index,
+            type: pattern.type,
+            charset: pattern.charset,
+            length: match[0].length
+          });
+        }
       }
     }
     
     return tokens;
   }
 
-  // Hashcat-style mask fuzzing: replace random characters in token
-  *maskFuzzer(token, mutations = 5) {
+  // Hashcat-style brute force: enumerate positions exhaustively
+  *bruteForceFuzzer(token, charset = '?') {
+    const charList = this.charsets[charset] || this.charsets['?'];
     const chars = token.split('');
-    const charset = this.charsets.all;
+    const numPositions = chars.length;
     
-    for (let mutationNum = 0; mutationNum < this.range; mutationNum++) {
-      // Randomly select 1-3 character positions to replace
-      const numMutations = Math.min(mutations, Math.max(1, Math.floor(Math.random() * 3) + 1));
-      const positions = new Set();
-      
-      while (positions.size < numMutations) {
-        positions.add(Math.floor(Math.random() * chars.length));
-      }
-      
+    // Start with limited positions to fuzz (e.g., last 6-8 characters)
+    // This is like hashcat's --increment feature
+    const fuzzyLength = Math.min(8, Math.max(3, Math.floor(numPositions / 4)));
+    const startPos = numPositions - fuzzyLength;
+    
+    let iterations = 0;
+    const maxIterations = this.range;
+    
+    // Generate combinations by incrementing positions
+    let positions = new Array(fuzzyLength).fill(0);
+    
+    while (iterations < maxIterations) {
+      // Create mutated token
       const mutated = [...chars];
-      for (const pos of positions) {
-        mutated[pos] = charset[Math.floor(Math.random() * charset.length)];
+      
+      // Apply current position values to fuzz zone
+      for (let i = 0; i < fuzzyLength; i++) {
+        mutated[startPos + i] = charList[positions[i] % charList.length];
       }
       
       const newToken = mutated.join('');
-      yield this.baseUrl.replace(token, newToken);
-    }
-  }
-
-  // Targeted character replacement on hex strings
-  *hexMutator(token) {
-    const hexChars = this.charsets.hex;
-    const chars = token.split('');
-    
-    for (let i = 0; i < this.range; i++) {
-      const mutated = [...chars];
-      // Replace 1-2 random hex digits
-      for (let j = 0; j < Math.max(1, Math.floor(Math.random() * 2) + 1); j++) {
-        const pos = Math.floor(Math.random() * chars.length);
-        mutated[pos] = hexChars[Math.floor(Math.random() * hexChars.length)];
-      }
-      
-      const newToken = mutated.join('');
-      yield this.baseUrl.replace(token, newToken);
-    }
-  }
-
-  // Dictionary-style fuzzing: replace whole token segments
-  *dictionaryMutator(token) {
-    const charset = this.charsets.all;
-    const segmentSize = Math.floor(token.length / 3);
-    
-    for (let i = 0; i < this.range; i++) {
-      let newToken = token;
-      
-      // Replace 1-2 segments
-      const numSegments = Math.random() > 0.5 ? 1 : 2;
-      for (let s = 0; s < numSegments; s++) {
-        const startPos = Math.floor(Math.random() * (token.length - segmentSize));
-        let replacement = '';
-        for (let c = 0; c < segmentSize; c++) {
-          replacement += charset[Math.floor(Math.random() * charset.length)];
-        }
-        newToken = newToken.substring(0, startPos) + replacement + newToken.substring(startPos + segmentSize);
-      }
-      
-      yield this.baseUrl.replace(token, newToken);
-    }
-  }
-
-  // Substitute similar-looking characters
-  *substitutionMutator(token) {
-    const substitutions = {
-      '0': ['O'],
-      'O': ['0'],
-      '1': ['I', 'l'],
-      'I': ['1', 'l'],
-      'l': ['1', 'I'],
-      'a': ['e'],
-      'e': ['a'],
-      'o': ['0'],
-      's': ['5'],
-      '5': ['s'],
-      'b': ['8', 'd'],
-      '8': ['b'],
-      't': ['7']
-    };
-    
-    for (let i = 0; i < this.range; i++) {
-      const chars = token.split('');
-      const pos = Math.floor(Math.random() * chars.length);
-      const char = chars[pos];
-      
-      if (substitutions[char]) {
-        const alternatives = substitutions[char];
-        chars[pos] = alternatives[Math.floor(Math.random() * alternatives.length)];
-        const newToken = chars.join('');
+      if (newToken !== token) {
         yield this.baseUrl.replace(token, newToken);
       }
+      
+      // Increment positions (like odometer: rightmost first)
+      let carry = 1;
+      for (let i = fuzzyLength - 1; i >= 0 && carry; i--) {
+        positions[i] += carry;
+        if (positions[i] >= charList.length) {
+          positions[i] = 0;
+          carry = 1;
+        } else {
+          carry = 0;
+        }
+      }
+      
+      iterations++;
     }
   }
 
-  // Main fuzzer: generate mutations across all tokens
+  // Hybrid: partially increment, partially random
+  *hybridBruteFuzzer(token, charset = '?') {
+    const charList = this.charsets[charset] || this.charsets['?'];
+    const chars = token.split('');
+    const numPositions = chars.length;
+    
+    // Divide into fixed and variable zones
+    const fixedSize = Math.max(0, numPositions - 6);
+    const varSize = numPositions - fixedSize;
+    
+    let iterations = 0;
+    let posCounter = new Array(varSize).fill(0);
+    
+    while (iterations < this.range) {
+      const mutated = [...chars];
+      
+      // Keep prefix fixed, enumerate suffix
+      for (let i = 0; i < varSize; i++) {
+        mutated[fixedSize + i] = charList[posCounter[i] % charList.length];
+      }
+      
+      const newToken = mutated.join('');
+      if (newToken !== token) {
+        yield this.baseUrl.replace(token, newToken);
+      }
+      
+      // Increment counter
+      let carry = 1;
+      for (let i = varSize - 1; i >= 0 && carry; i--) {
+        posCounter[i] += carry;
+        if (posCounter[i] >= charList.length) {
+          posCounter[i] = 0;
+          carry = 1;
+        } else {
+          carry = 0;
+        }
+      }
+      
+      iterations++;
+    }
+  }
+
+  // Generate all variations
   *generateAll() {
     const tokens = this.findTokens();
-    console.log(`Found ${tokens.length} token(s) to fuzz: ${tokens.map(t => t.value.substring(0, 10) + '...').join(', ')}`);
+    console.log(`Found ${tokens.length} token(s) for brute force`);
     
     if (tokens.length === 0) return;
     
-    // Cycle through different fuzzing strategies
-    const strategies = [
-      { gen: (t) => this.maskFuzzer(t, 3), name: 'mask' },
-      { gen: (t) => this.hexMutator(t), name: 'hex' },
-      { gen: (t) => this.dictionaryMutator(t), name: 'dict' },
-      { gen: (t) => this.substitutionMutator(t), name: 'sub' }
-    ];
-    
-    let generated = 0;
-    let strategyIndex = 0;
-    
-    while (generated < this.range) {
-      for (const token of tokens) {
-        const strategy = strategies[strategyIndex % strategies.length];
-        
-        try {
-          for (const url of strategy.gen(token.value)) {
-            if (generated >= this.range) return;
-            yield url;
-            generated++;
-          }
-        } catch (e) {
-          // Skip failed generations
-        }
-        
-        strategyIndex++;
+    // Fuzz each token
+    for (const token of tokens) {
+      console.log(`Brute forcing token: ${token.value.substring(0, 10)}... (type: ${token.type}, length: ${token.length})`);
+      
+      // Use hybrid approach: incremental + some randomness
+      let generated = 0;
+      const tokenRange = Math.floor(this.range / tokens.length);
+      
+      for (const url of this.hybridBruteFuzzer(token.value, token.charset)) {
+        if (generated >= tokenRange) break;
+        yield url;
+        generated++;
       }
     }
   }
 }
 
-// Smart content-aware HTTP client with duplicate detection
-async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new Map()) {
+// Smart content-aware HTTP client
+async function checkURL(url, timeout = 6000, retries = 1, contentHashMap = new Map()) {
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'image/*,*/*',
@@ -207,9 +183,6 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
     'Pragma': 'no-cache',
     'Expires': '0',
     'Referer': 'https://www.google.com/',
-    'Sec-Fetch-Dest': 'image',
-    'Sec-Fetch-Mode': 'no-cors',
-    'Sec-Fetch-Site': 'cross-site',
     'DNT': '1'
   };
 
@@ -217,7 +190,7 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
     try {
       const response = await axios.get(url, {
         timeout,
-        maxRedirects: 3,
+        maxRedirects: 2,
         validateStatus: (status) => status < 500,
         headers,
         responseType: 'arraybuffer',
@@ -231,19 +204,18 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
           status: 304,
           found: false,
           contentLength: 0,
-          contentType: 'cached',
           hash: null,
           isDuplicate: false
         };
       }
       
+      // Only accept 200 OK
       if (response.status !== 200) {
         return {
           url,
           status: response.status,
           found: false,
           contentLength: 0,
-          contentType: response.headers['content-type'] || 'unknown',
           hash: null,
           isDuplicate: false
         };
@@ -252,34 +224,31 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
       const contentLength = response.data.length;
       const contentType = response.headers['content-type'] || 'unknown';
       
-      // Must be actual image
+      // Must be image
       if (!contentType.includes('image/')) {
         return {
           url,
           status: 200,
           found: false,
           contentLength,
-          contentType,
           hash: null,
           isDuplicate: false
         };
       }
       
-      // Reject tiny files
+      // Reject tiny files (placeholders/errors)
       if (contentLength < 1500) {
         return {
           url,
           status: 200,
           found: false,
           contentLength,
-          contentType,
           hash: null,
-          isDuplicate: false,
-          reason: 'too_small'
+          isDuplicate: false
         };
       }
       
-      // Hash content for deduplication
+      // Hash content for dedup
       const contentHash = crypto.createHash('md5').update(response.data).digest('hex');
       const isDuplicate = contentHashMap.has(contentHash);
       
@@ -292,9 +261,9 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
         status: 200,
         found: true,
         contentLength,
-        contentType,
         hash: contentHash,
-        isDuplicate
+        isDuplicate,
+        contentType
       };
       
     } catch (error) {
@@ -304,12 +273,11 @@ async function checkURL(url, timeout = 8000, retries = 2, contentHashMap = new M
           status: 'timeout',
           found: false,
           contentLength: 0,
-          error: error.message,
           hash: null,
           isDuplicate: false
         };
       }
-      await new Promise(resolve => setTimeout(resolve, 500 * Math.pow(2, attempt)));
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
   }
 }
@@ -357,11 +325,11 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
   const seenUrls = new Set(referenceUrls);
   const contentHashMap = new Map();
   
-  // Generate fuzzy mutations from reference URLs
+  // Generate brute force mutations
   for (const baseUrl of referenceUrls) {
-    const bruteForcer = new MaskBasedBruteForcer(baseUrl, range);
+    const bruteForcer = new HashcatBruteForceFuzzer(baseUrl, range);
     
-    console.log(`[${sessionKey}] Starting mask-based fuzzing on: ${baseUrl}`);
+    console.log(`[${sessionKey}] Starting hashcat brute force on: ${baseUrl}`);
     
     for (const url of bruteForcer.generateAll()) {
       if (!seenUrls.has(url) && urlQueue.length < maxRequests) {
@@ -376,14 +344,14 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     if (totalGenerated >= maxRequests) break;
   }
   
-  console.log(`[${sessionKey}] Generated ${totalGenerated} fuzzy URL mutations`);
+  console.log(`[${sessionKey}] Generated ${totalGenerated} brute force URLs (keyspace enumeration)`);
   
   // Process with concurrency
   for (let i = 0; i < urlQueue.length; i += concurrency) {
     if (!session.active) break;
     
     const batch = urlQueue.slice(i, i + concurrency);
-    const promises = batch.map(url => checkURL(url, 8000, 2, contentHashMap));
+    const promises = batch.map(url => checkURL(url, 6000, 1, contentHashMap));
     
     const results = await Promise.all(promises);
     
@@ -394,12 +362,10 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
         const classification = classifyURL(result);
         session.stats[classification]++;
         
-        // Store unique images
         if (classification === 'new' || classification === 'placeholder') {
           session.results.push({
             url: result.url,
             status: result.status,
-            contentType: result.contentType,
             contentLength: result.contentLength,
             hash: result.hash,
             classification,
@@ -412,15 +378,15 @@ async function performBruteForceScan(referenceUrls, range, delay, concurrency, m
     }
     
     const elapsed = Math.round((Date.now() - session.startTime) / 1000);
-    const rate = Math.round(session.stats.scanned / (elapsed || 1));
-    console.log(`[${sessionKey}] ${session.stats.scanned}/${urlQueue.length} | New: ${session.stats.new} | Placeholders: ${session.stats.placeholder} | Dupes: ${session.stats.duplicate} | Rate: ${rate} req/s`);
+    const rate = elapsed > 0 ? Math.round(session.stats.scanned / elapsed) : 0;
+    console.log(`[${sessionKey}] ${session.stats.scanned}/${urlQueue.length} | New: ${session.stats.new} | Dupes: ${session.stats.duplicate} | Rate: ${rate} req/s`);
     
     if (i + concurrency < urlQueue.length && delay > 0) {
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   
-  console.log(`[${sessionKey}] Fuzzing complete. Found ${session.stats.new} unique new images`);
+  console.log(`[${sessionKey}] Brute force complete. Found ${session.stats.new} unique new images`);
   session.active = false;
 }
 
@@ -463,5 +429,5 @@ app.get('/api/export/:sessionId', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🔓 Image URL Brute Forcer running on http://localhost:${PORT}`);
+  console.log(`🔓 Image URL Brute Forcer (Hashcat Mode) running on http://localhost:${PORT}`);
 });
